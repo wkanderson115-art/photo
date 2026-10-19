@@ -194,7 +194,9 @@ def build() -> tuple[str, dict[str, str]]:
     for parent, children in GROUP_HIERARCHY.items():
         child_ids = " ".join(f"{group_ids[child]} /* {child.split('/')[-1]} */," for child in children)
         parent_path = parent.split("/")[-1] if parent else ""
-        parent_id = source_group if parent == "" else group_ids[parent]
+        if parent == "":
+            continue  # The source group above already includes these children and resources.
+        parent_id = group_ids[parent]
         add(
             f"\t\t{parent_id} /* {parent_path} */ = {{isa = PBXGroup; children = ("
             f"{child_ids} ); path = {quote(parent_path)}; sourceTree = \"<group>\"; }};"
