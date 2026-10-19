@@ -1,0 +1,53 @@
+name: iOS Build (unsigned IPA)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, work]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select newest installed Xcode
+        run: |
+          set -euo pipefail
+          XCODE=$(find /Applications -maxdepth 1 -name 'Xcode*.app' | sort -V | tail -n 1)
+          test -n "$XCODE"
+          sudo xcode-select --switch "$XCODE/Contents/Developer"
+          xcodebuild -version
+          xcodebuild -showsdks
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install verification dependencies
+        run: python -m pip install -r scripts/requirements-check.txt
+      - name: Verify project and Swift syntax
+        run: python scripts/verify.py
+      - name: Run shutter decision tests
+        run: |
+          mkdir -p build
+          xcrun swiftc OutdoorPhotoAssistant/Core/Analysis/SmartShutterEngine.swift tests/main.swift -o build/shutter-tests
+          build/shutter-tests
+      - name: Build Debug and Release and package unsigned IPA
+        run: bash scripts/build_unsigned_ipa.sh
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: OutdoorPhotoAssistant-unsigned-ipa
+          path: build/OutdoorPhotoAssistant-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: build/*.log
+          if-no-files-found: ignore

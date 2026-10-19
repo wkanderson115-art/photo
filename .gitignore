@@ -1,0 +1,16 @@
+# macOS / Xcode
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.ipa
+*.dSYM
+build-*.log
+
+# Python tooling
+__pycache__/
+*.pyc
+
+# System
+.DS_Store
+Thumbs.db

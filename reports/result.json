@@ -1,0 +1,30 @@
+{
+  "source_archive_sha256": "b230014bf8c408065d27672f19b7c7f3b9cf3ae7e9207b431ecb5785f0f7f3ab",
+  "modified_existing_source_and_scripts": [
+    ".github/workflows/ios-unsigned-build.yml",
+    "OutdoorPhotoAssistant/App/OutdoorPhotoAssistantApp.swift",
+    "OutdoorPhotoAssistant/App/RootView.swift",
+    "OutdoorPhotoAssistant/Core/Analysis/FrameAnalyzer.swift",
+    "OutdoorPhotoAssistant/Core/Analysis/PortraitBeautyEngine.swift",
+    "OutdoorPhotoAssistant/Core/Camera/AdaptiveCameraEngine.swift",
+    "OutdoorPhotoAssistant/Core/Camera/CameraService.swift",
+    "OutdoorPhotoAssistant/Core/Location/LocationService.swift",
+    "OutdoorPhotoAssistant/Core/Storage/PhotoLibraryService.swift",
+    "OutdoorPhotoAssistant/Features/Capture/CaptureView.swift",
+    "OutdoorPhotoAssistant/Features/Capture/CompositionOverlay.swift",
+    "OutdoorPhotoAssistant/Features/Review/ReviewView.swift",
+    "scripts/build_unsigned_ipa.sh",
+    "scripts/check_swift.py",
+    "scripts/verify.py"
+  ],
+  "swift_app_files": 18,
+  "swift_syntax_failures": 0,
+  "project_static_verification": "passed",
+  "shell_syntax": "passed",
+  "python_script_compilation": "passed",
+  "xcode_build": "blocked: Linux; macOS/Xcode unavailable",
+  "build_script_exit_code": 2,
+  "swift_decision_tests": "not executed locally; included in macOS CI",
+  "iphone_run": "not executed",
+  "ipa_produced": false
+}
