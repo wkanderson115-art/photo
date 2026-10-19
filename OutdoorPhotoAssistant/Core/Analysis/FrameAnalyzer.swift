@@ -229,7 +229,140 @@ final class FrameAnalyzer: ObservableObject {
 
             var aestheticsRequest: VNRequest?
             if #available(iOS 18.0, *) {
-                let request = VNCalculateImageAestheticsScoresRequest 导演：寻找最佳构图"
+                let request = VNCalculateImageAestheticsScoresRequest()
+                aestheticsRequest = request
+                requests.append(request)
+            }
+            try? handler.perform(requests)
+
+            let faces = faceRequest.results ?? []
+            let humans = humanRequest.results ?? []
+            var info = SubjectInfo()
+            if let face = faces.max(by: { $0.confidence < $1.confidence }) {
+                info = SubjectInfo(type: "人物", rect: face.boundingBox, confidence: face.confidence)
+            } else if let human = humans.max(by: { $0.confidence < $1.confidence }) {
+                info = SubjectInfo(type: "人物", rect: human.boundingBox, confidence: human.confidence)
+            }
+
+            let brightness = Self.measureImageBrightness(cgImage)
+            let horizon = Double(horizonRequest.results?.first?.angle ?? 0)
+            var aesthetics: Float?
+            if #available(iOS 18.0, *),
+               let request = aestheticsRequest as? VNCalculateImageAestheticsScoresRequest {
+                aesthetics = request.results?.first?.overallScore
+            }
+            let score = Self.composeScore(subject: info, brightness: brightness, horizon: horizon)
+            let aestheticValue = aesthetics.map { Double($0) }
+            completion(aestheticValue, score, horizon, info)
+        }
+    }
+
+    // MARK: - 场景识别
+
+    private static func classifyScene(labels: [VNClassificationObservation],
+                                      personConfidence: Double) -> (name: String, confidence: Double) {
+        if personConfidence >= 0.35 {
+            return ("人物", max(0.65, min(0.99, personConfidence)))
+        }
+        let candidates: [(String, [String])] = [
+            ("海边", ["beach", "coast", "seashore", "ocean", "shoreline"]),
+            ("日落", ["sunset", "sunrise", "dusk", "twilight"]),
+            ("建筑", ["building", "architecture", "skyscraper", "church", "tower"]),
+            ("夜景", ["night", "nighttime", "nightscape"]),
+            ("花草", ["flower", "garden", "plant", "vegetation", "blossom"]),
+            ("汽车", ["car", "vehicle", "automobile", "truck"]),
+            ("风景", ["landscape", "mountain", "valley", "forest", "nature", "sky", "cloud"])
+        ]
+        var best: (String, Double) = ("风景", 0.30)
+        for (scene, keys) in candidates {
+            let matches = labels.filter { observation in
+                observation.confidence >= 0.12 &&
+                keys.contains { observation.identifier.localizedCaseInsensitiveContains($0) }
+            }
+            guard let match = matches.max(by: { $0.confidence < $1.confidence }) else { continue }
+            let value = Double(match.confidence)
+            if value > best.1 { best = (scene, value) }
+        }
+        return best
+    }
+
+    // MARK: - 构图评分（0–100，可解释）
+
+    static func composeScore(subject: SubjectInfo, brightness: Double, horizon: Double) -> Int {
+        var score = 0.0
+
+        if subject.rect != .zero {
+            let midX = Double(subject.rect.midX)
+            let midY = Double(subject.rect.midY)
+            let dx = min(abs(midX - 1.0 / 3.0), abs(midX - 2.0 / 3.0)) / (1.0 / 6.0)
+            let dy = min(abs(midY - 1.0 / 3.0), abs(midY - 2.0 / 3.0)) / (1.0 / 6.0)
+            score += 40 * max(0, 1 - (0.7 * min(dx, 1) + 0.3 * min(dy, 1)))
+
+            let inset = Double(min(subject.rect.minX,
+                                   subject.rect.minY,
+                                   1 - subject.rect.maxX,
+                                   1 - subject.rect.maxY))
+            score += 15 * min(1, max(0, inset / 0.08))
+        } else {
+            score += 27   // 无主体：拿不到三分位置与留白分，只保留基础分
+        }
+
+        score += 25 * max(0, 1 - abs(horizon) / 0.12)
+        score += 20 * max(0, 1 - abs(brightness - 0.52) / 0.28)
+        return max(0, min(100, Int(score.rounded())))
+    }
+
+    // MARK: - 文案与质量分
+
+    private static func framingHint(subject: SubjectInfo, scene: String) -> String {
+        guard subject.rect != .zero else {
+            return scene == "风景" ? "寻找前景层次，避免主体贴边" : "等待识别主体"
+        }
+        let x = subject.rect.midX
+        if x < 0.30 { return "主体偏左：右侧保留视线空间" }
+        if x > 0.70 { return "主体偏右：左侧保留视线空间" }
+        if abs(x - 0.5) < 0.10 { return "主体居中：尝试向三分线移动" }
+        return "主体位置合适，保持当前取景"
+    }
+
+    private static func gradeSummary(_ grade: ColorGrade, filter: PhotoFilter) -> String {
+        var parts = [filter.rawValue]
+        if grade.temperature > 5 { parts.append("偏暖") } else if grade.temperature < -5 { parts.append("偏冷") }
+        if grade.saturation > 1.07 { parts.append("高彩") } else if grade.saturation < 0.98 { parts.append("低彩") }
+        if grade.contrast > 1.06 { parts.append("高反差") }
+        if grade.highlights < -8 { parts.append("压高光") }
+        if grade.shadows > 6 { parts.append("提阴影") }
+        return parts.joined(separator: " · ")
+    }
+
+    private static func recommendedZoom(scene: String, subject: SubjectInfo) -> Double {
+        if subject.rect != .zero { return 1 }
+        if scene == "建筑" { return 0.5 }
+        return 1
+    }
+
+    private static func exposureQuality(_ brightness: Double) -> Int {
+        if brightness < 0.10 || brightness > 0.95 { return 40 }
+        if brightness < 0.16 || brightness > 0.90 { return 62 }
+        if brightness < 0.22 || brightness > 0.85 { return 80 }
+        return 100
+    }
+
+    private static func qualityLevel(exposure: Int, composition: Int, sharpness: Int) -> String {
+        let average = (exposure + composition + sharpness) / 3
+        if average >= 85 { return "优秀" }
+        if average >= 70 { return "良好" }
+        return "需要调整"
+    }
+
+    private static func directorTitle(scene: String, score: Int) -> String {
+        if score >= 88 { return "AI 导演：黄金构图" }
+        switch scene {
+        case "人物", "自拍": return "AI 导演：人像构图"
+        case "日落": return "AI 导演：晚霞构图"
+        case "建筑": return "AI 导演：建筑透视"
+        case "夜景": return "AI 导演：夜景稳定"
+        default: return "AI 导演：寻找最佳构图"
         }
     }
 
