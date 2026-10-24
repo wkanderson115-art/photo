@@ -196,6 +196,8 @@ def build() -> tuple[str, dict[str, str]]:
         f"path = OutdoorPhotoAssistant; sourceTree = \"<group>\"; }};"
     )
     for parent, children in GROUP_HIERARCHY.items():
+        if parent == "":
+            continue  # The source group above also owns the plist and assets.
         child_ids = " ".join(f"{group_ids[child]} /* {child.split('/')[-1]} */," for child in children)
         parent_path = parent.split("/")[-1] if parent else ""
         parent_id = source_group if parent == "" else group_ids[parent]
