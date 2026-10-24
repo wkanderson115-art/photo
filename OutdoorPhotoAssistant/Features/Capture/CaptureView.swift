@@ -78,7 +78,9 @@ struct CaptureView: View {
         return grade
     }
 
-    var body: some View {
+    var body: some View { reviewEventsView }
+
+    private var baseView: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             GeometryReader { geo in
@@ -154,6 +156,10 @@ struct CaptureView: View {
         .sheet(isPresented: $showingSettings) {
             SettingsView(isPresentedModally: true).preferredColorScheme(.light)
         }
+    }
+
+    private var lifecycleView: some View {
+        baseView
         .onAppear {
             guard self.isSelected else { return }
             self.camera.setDepthDelivery(self.portraitDepth)
@@ -170,6 +176,10 @@ struct CaptureView: View {
             self.autoShotTask?.cancel()
             self.toastTask?.cancel()
         }
+    }
+
+    private var sessionEventsView: some View {
+        lifecycleView
         .onChange(of: scenePhase) { _, phase in
             if phase == .active && self.isSelected && !self.showingSettings && !self.showReview {
                 self.camera.start()
@@ -213,6 +223,10 @@ struct CaptureView: View {
         .onChange(of: camera.photoToken) { _, _ in
             self.processLatestPhoto()
         }
+    }
+
+    private var reviewEventsView: some View {
+        sessionEventsView
         .onChange(of: analyzer.observationTick) { _, _ in refreshDirector() }
         .onChange(of: autoDirector) { _, _ in directorController.reset(); refreshDirector() }
         .onChange(of: directorFraming) { _, _ in directorController.reset(); refreshDirector() }
