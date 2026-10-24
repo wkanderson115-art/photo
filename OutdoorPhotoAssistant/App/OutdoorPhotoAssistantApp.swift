@@ -16,8 +16,8 @@ struct OutdoorPhotoAssistantApp: App {
                 .environmentObject(analyzer)
                 .environmentObject(location)
                 .environmentObject(library)
-                .preferredColorScheme(.dark)
                 .onAppear {
+                    APIKeyStore.removeLegacyBackendSession()
                     let analyzerRef = self.analyzer
                     self.camera.onFrame = { buffer, position in
                         analyzerRef.analyze(buffer, position: position)

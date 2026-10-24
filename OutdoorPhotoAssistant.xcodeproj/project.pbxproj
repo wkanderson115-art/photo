@@ -7,6 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		11C04C5C8F4347C21CD1269A /* AppPhotoStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 886147D9B228B9705F4C3103 /* AppPhotoStore.swift */; };
+		500D45448FF78C2C1A9F3BC1 /* CloudConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44BC44809BEDB34135031416 /* CloudConfiguration.swift */; };
+		5B3540DBB10CCF5D04496019 /* CloudAPISettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A67247B099E0BD4EB53B39CA /* CloudAPISettingsView.swift */; };
+		7C1D45F392BC4FB642F8DDF6 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF34473FA101597BD3442717 /* AppTheme.swift */; };
+		877C4B38A43A4DACFD8962DB /* DirectorEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91964C0AAFC14E26C3FC74B7 /* DirectorEngine.swift */; };
 		B00000000000000000000001 /* OutdoorPhotoAssistantApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000001 /* OutdoorPhotoAssistantApp.swift */; };
 		B00000000000000000000002 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000002 /* RootView.swift */; };
 		B00000000000000000000003 /* CameraService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000003 /* CameraService.swift */; };
@@ -27,10 +32,18 @@
 		B00000000000000000000018 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000018 /* SettingsView.swift */; };
 		B00000000000000000000019 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000020 /* Assets.xcassets */; };
 		B00000000000000000000020 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000021 /* PrivacyInfo.xcprivacy */; };
+		CE224989B632A87E6946D791 /* CloudAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = C14249858C924ABF1C5A840A /* CloudAPI.swift */; };
+		DDFE447EB811E1C3FD7BFD82 /* GalleryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54AB45E2BCFE358338ACFC14 /* GalleryView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		44BC44809BEDB34135031416 /* CloudConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CloudConfiguration.swift; path = OutdoorPhotoAssistant/Core/Cloud/CloudConfiguration.swift; sourceTree = SOURCE_ROOT; };
+		54AB45E2BCFE358338ACFC14 /* GalleryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = GalleryView.swift; path = OutdoorPhotoAssistant/Features/Gallery/GalleryView.swift; sourceTree = SOURCE_ROOT; };
+		886147D9B228B9705F4C3103 /* AppPhotoStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppPhotoStore.swift; path = OutdoorPhotoAssistant/Core/Storage/AppPhotoStore.swift; sourceTree = SOURCE_ROOT; };
+		91964C0AAFC14E26C3FC74B7 /* DirectorEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DirectorEngine.swift; path = OutdoorPhotoAssistant/Core/Analysis/DirectorEngine.swift; sourceTree = SOURCE_ROOT; };
 		A00000000000000000000005 /* OutdoorPhotoAssistant.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OutdoorPhotoAssistant.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A67247B099E0BD4EB53B39CA /* CloudAPISettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CloudAPISettingsView.swift; path = OutdoorPhotoAssistant/Features/Cloud/CloudAPISettingsView.swift; sourceTree = SOURCE_ROOT; };
+		C14249858C924ABF1C5A840A /* CloudAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CloudAPI.swift; path = OutdoorPhotoAssistant/Core/Cloud/CloudAPI.swift; sourceTree = SOURCE_ROOT; };
 		F00000000000000000000001 /* OutdoorPhotoAssistantApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutdoorPhotoAssistantApp.swift; sourceTree = "<group>"; };
 		F00000000000000000000002 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		F00000000000000000000003 /* CameraService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraService.swift; sourceTree = "<group>"; };
@@ -52,57 +65,417 @@
 		F00000000000000000000019 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		F00000000000000000000020 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F00000000000000000000021 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		FF34473FA101597BD3442717 /* AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppTheme.swift; path = OutdoorPhotoAssistant/App/AppTheme.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		A00000000000000000000008 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A00000000000000000000008 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		A00000000000000000000002 = {isa = PBXGroup; children = (A00000000000000000000006 /* OutdoorPhotoAssistant */, A00000000000000000000003 /* Products */, ); sourceTree = "<group>"; };
-		A00000000000000000000003 /* Products */ = {isa = PBXGroup; children = (A00000000000000000000005 /* OutdoorPhotoAssistant.app */, ); name = Products; sourceTree = "<group>"; };
-		A00000000000000000000006 /* OutdoorPhotoAssistant */ = {isa = PBXGroup; children = (D00000000000000000000001 /* App */, D00000000000000000000010 /* Core */, D00000000000000000000011 /* Features */, F00000000000000000000019 /* Info.plist */, F00000000000000000000020 /* Assets.xcassets */, F00000000000000000000021 /* PrivacyInfo.xcprivacy */, ); path = OutdoorPhotoAssistant; sourceTree = "<group>"; };
-		D00000000000000000000010 /* Core */ = {isa = PBXGroup; children = (D00000000000000000000002 /* Camera */, D00000000000000000000003 /* Analysis */, D00000000000000000000004 /* Storage */, D00000000000000000000005 /* Location */, D00000000000000000000006 /* Motion */, ); path = Core; sourceTree = "<group>"; };
-		D00000000000000000000011 /* Features */ = {isa = PBXGroup; children = (D00000000000000000000007 /* Capture */, D00000000000000000000008 /* Review */, D00000000000000000000009 /* Settings */, ); path = Features; sourceTree = "<group>"; };
-		D00000000000000000000001 /* App */ = {isa = PBXGroup; children = (F00000000000000000000001 /* OutdoorPhotoAssistantApp.swift */, F00000000000000000000002 /* RootView.swift */, ); path = App; sourceTree = "<group>"; };
-		D00000000000000000000002 /* Camera */ = {isa = PBXGroup; children = (F00000000000000000000003 /* CameraService.swift */, F00000000000000000000004 /* AdaptiveCameraEngine.swift */, F00000000000000000000005 /* DepthPortraitProcessor.swift */, ); path = Camera; sourceTree = "<group>"; };
-		D00000000000000000000003 /* Analysis */ = {isa = PBXGroup; children = (F00000000000000000000006 /* FrameAnalyzer.swift */, F00000000000000000000007 /* PhotoFilter.swift */, F00000000000000000000008 /* ColorGrade.swift */, F00000000000000000000009 /* PortraitBeautyEngine.swift */, F00000000000000000000010 /* SmartShutterEngine.swift */, F00000000000000000000011 /* PhotoPostProcessor.swift */, ); path = Analysis; sourceTree = "<group>"; };
-		D00000000000000000000004 /* Storage */ = {isa = PBXGroup; children = (F00000000000000000000012 /* PhotoLibraryService.swift */, ); path = Storage; sourceTree = "<group>"; };
-		D00000000000000000000005 /* Location */ = {isa = PBXGroup; children = (F00000000000000000000013 /* LocationService.swift */, ); path = Location; sourceTree = "<group>"; };
-		D00000000000000000000006 /* Motion */ = {isa = PBXGroup; children = (F00000000000000000000014 /* MotionService.swift */, ); path = Motion; sourceTree = "<group>"; };
-		D00000000000000000000007 /* Capture */ = {isa = PBXGroup; children = (F00000000000000000000015 /* CaptureView.swift */, F00000000000000000000016 /* CompositionOverlay.swift */, ); path = Capture; sourceTree = "<group>"; };
-		D00000000000000000000008 /* Review */ = {isa = PBXGroup; children = (F00000000000000000000017 /* ReviewView.swift */, ); path = Review; sourceTree = "<group>"; };
-		D00000000000000000000009 /* Settings */ = {isa = PBXGroup; children = (F00000000000000000000018 /* SettingsView.swift */, ); path = Settings; sourceTree = "<group>"; };
+		33544550A4F9F63F14649F46 /* Gallery */ = {
+			isa = PBXGroup;
+			children = (
+				54AB45E2BCFE358338ACFC14 /* GalleryView.swift */,
+			);
+			name = Gallery;
+			sourceTree = "<group>";
+		};
+		A00000000000000000000002 = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000006 /*  */,
+				A00000000000000000000003 /* Products */,
+				E4204ED481B809912BF89BED /* Cloud APIs */,
+				33544550A4F9F63F14649F46 /* Gallery */,
+			);
+			sourceTree = "<group>";
+		};
+		A00000000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000005 /* OutdoorPhotoAssistant.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A00000000000000000000006 /*  */ = {
+			isa = PBXGroup;
+			children = (
+				D00000000000000000000001 /* App */,
+				D00000000000000000000010 /* Core */,
+				D00000000000000000000011 /* Features */,
+			);
+			path = "";
+			sourceTree = "<group>";
+		};
+		D00000000000000000000001 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000001 /* OutdoorPhotoAssistantApp.swift */,
+				F00000000000000000000002 /* RootView.swift */,
+				FF34473FA101597BD3442717 /* AppTheme.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		D00000000000000000000002 /* Camera */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000003 /* CameraService.swift */,
+				F00000000000000000000004 /* AdaptiveCameraEngine.swift */,
+				F00000000000000000000005 /* DepthPortraitProcessor.swift */,
+			);
+			path = Camera;
+			sourceTree = "<group>";
+		};
+		D00000000000000000000003 /* Analysis */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000006 /* FrameAnalyzer.swift */,
+				F00000000000000000000007 /* PhotoFilter.swift */,
+				F00000000000000000000008 /* ColorGrade.swift */,
+				F00000000000000000000009 /* PortraitBeautyEngine.swift */,
+				F00000000000000000000010 /* SmartShutterEngine.swift */,
+				F00000000000000000000011 /* PhotoPostProcessor.swift */,
+				91964C0AAFC14E26C3FC74B7 /* DirectorEngine.swift */,
+			);
+			path = Analysis;
+			sourceTree = "<group>";
+		};
+		D00000000000000000000004 /* Storage */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000012 /* PhotoLibraryService.swift */,
+				886147D9B228B9705F4C3103 /* AppPhotoStore.swift */,
+			);
+			path = Storage;
+			sourceTree = "<group>";
+		};
+		D00000000000000000000005 /* Location */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000013 /* LocationService.swift */,
+			);
+			path = Location;
+			sourceTree = "<group>";
+		};
+		D00000000000000000000006 /* Motion */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000014 /* MotionService.swift */,
+			);
+			path = Motion;
+			sourceTree = "<group>";
+		};
+		D00000000000000000000007 /* Capture */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000015 /* CaptureView.swift */,
+				F00000000000000000000016 /* CompositionOverlay.swift */,
+			);
+			path = Capture;
+			sourceTree = "<group>";
+		};
+		D00000000000000000000008 /* Review */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000017 /* ReviewView.swift */,
+			);
+			path = Review;
+			sourceTree = "<group>";
+		};
+		D00000000000000000000009 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000018 /* SettingsView.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+		D00000000000000000000010 /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				D00000000000000000000002 /* Camera */,
+				D00000000000000000000003 /* Analysis */,
+				D00000000000000000000004 /* Storage */,
+				D00000000000000000000005 /* Location */,
+				D00000000000000000000006 /* Motion */,
+			);
+			path = Core;
+			sourceTree = "<group>";
+		};
+		D00000000000000000000011 /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				D00000000000000000000007 /* Capture */,
+				D00000000000000000000008 /* Review */,
+				D00000000000000000000009 /* Settings */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		E4204ED481B809912BF89BED /* Cloud APIs */ = {
+			isa = PBXGroup;
+			children = (
+				C14249858C924ABF1C5A840A /* CloudAPI.swift */,
+				44BC44809BEDB34135031416 /* CloudConfiguration.swift */,
+				A67247B099E0BD4EB53B39CA /* CloudAPISettingsView.swift */,
+			);
+			name = "Cloud APIs";
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		A00000000000000000000004 /* OutdoorPhotoAssistant */ = {isa = PBXNativeTarget; buildConfigurationList = A00000000000000000000011; buildPhases = (A00000000000000000000007 /* Sources */, A00000000000000000000008 /* Frameworks */, A00000000000000000000009 /* Resources */, ); buildRules = (); dependencies = (); name = OutdoorPhotoAssistant; productName = OutdoorPhotoAssistant; productReference = A00000000000000000000005 /* OutdoorPhotoAssistant.app */; productType = "com.apple.product-type.application"; };
+		A00000000000000000000004 /* OutdoorPhotoAssistant */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A00000000000000000000011 /* Build configuration list for PBXNativeTarget "OutdoorPhotoAssistant" */;
+			buildPhases = (
+				A00000000000000000000007 /* Sources */,
+				A00000000000000000000008 /* Frameworks */,
+				A00000000000000000000009 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = OutdoorPhotoAssistant;
+			productName = OutdoorPhotoAssistant;
+			productReference = A00000000000000000000005 /* OutdoorPhotoAssistant.app */;
+			productType = "com.apple.product-type.application";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		A00000000000000000000001 /* Project object */ = {isa = PBXProject; attributes = { BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 2600; LastUpgradeCheck = 2600; TargetAttributes = { A00000000000000000000004 = { CreatedOnToolsVersion = 26.0; }; }; }; buildConfigurationList = A00000000000000000000010; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base, "zh-Hans", ); mainGroup = A00000000000000000000002; productRefGroup = A00000000000000000000003 /* Products */; projectDirPath = ""; projectRoot = ""; targets = (A00000000000000000000004 /* OutdoorPhotoAssistant */, ); };
+		A00000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					A00000000000000000000004 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+				};
+			};
+			buildConfigurationList = A00000000000000000000010 /* Build configuration list for PBXProject "OutdoorPhotoAssistant" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+				"zh-Hans",
+			);
+			mainGroup = A00000000000000000000002;
+			productRefGroup = A00000000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A00000000000000000000004 /* OutdoorPhotoAssistant */,
+			);
+		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		A00000000000000000000009 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000019 /* Assets.xcassets in Resources */, B00000000000000000000020 /* PrivacyInfo.xcprivacy in Resources */, ); runOnlyForDeploymentPostprocessing = 0; };
+		A00000000000000000000009 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B00000000000000000000019 /* Assets.xcassets in Resources */,
+				B00000000000000000000020 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		A00000000000000000000007 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000001 /* OutdoorPhotoAssistantApp.swift in Sources */, B00000000000000000000002 /* RootView.swift in Sources */, B00000000000000000000003 /* CameraService.swift in Sources */, B00000000000000000000004 /* AdaptiveCameraEngine.swift in Sources */, B00000000000000000000005 /* DepthPortraitProcessor.swift in Sources */, B00000000000000000000006 /* FrameAnalyzer.swift in Sources */, B00000000000000000000007 /* PhotoFilter.swift in Sources */, B00000000000000000000008 /* ColorGrade.swift in Sources */, B00000000000000000000009 /* PortraitBeautyEngine.swift in Sources */, B00000000000000000000010 /* SmartShutterEngine.swift in Sources */, B00000000000000000000011 /* PhotoPostProcessor.swift in Sources */, B00000000000000000000012 /* PhotoLibraryService.swift in Sources */, B00000000000000000000013 /* LocationService.swift in Sources */, B00000000000000000000014 /* MotionService.swift in Sources */, B00000000000000000000015 /* CaptureView.swift in Sources */, B00000000000000000000016 /* CompositionOverlay.swift in Sources */, B00000000000000000000017 /* ReviewView.swift in Sources */, B00000000000000000000018 /* SettingsView.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
+		A00000000000000000000007 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B00000000000000000000001 /* OutdoorPhotoAssistantApp.swift in Sources */,
+				B00000000000000000000002 /* RootView.swift in Sources */,
+				B00000000000000000000003 /* CameraService.swift in Sources */,
+				B00000000000000000000004 /* AdaptiveCameraEngine.swift in Sources */,
+				B00000000000000000000005 /* DepthPortraitProcessor.swift in Sources */,
+				B00000000000000000000006 /* FrameAnalyzer.swift in Sources */,
+				B00000000000000000000007 /* PhotoFilter.swift in Sources */,
+				B00000000000000000000008 /* ColorGrade.swift in Sources */,
+				B00000000000000000000009 /* PortraitBeautyEngine.swift in Sources */,
+				B00000000000000000000010 /* SmartShutterEngine.swift in Sources */,
+				B00000000000000000000011 /* PhotoPostProcessor.swift in Sources */,
+				B00000000000000000000012 /* PhotoLibraryService.swift in Sources */,
+				B00000000000000000000013 /* LocationService.swift in Sources */,
+				B00000000000000000000014 /* MotionService.swift in Sources */,
+				B00000000000000000000015 /* CaptureView.swift in Sources */,
+				B00000000000000000000016 /* CompositionOverlay.swift in Sources */,
+				B00000000000000000000017 /* ReviewView.swift in Sources */,
+				B00000000000000000000018 /* SettingsView.swift in Sources */,
+				877C4B38A43A4DACFD8962DB /* DirectorEngine.swift in Sources */,
+				CE224989B632A87E6946D791 /* CloudAPI.swift in Sources */,
+				500D45448FF78C2C1A9F3BC1 /* CloudConfiguration.swift in Sources */,
+				5B3540DBB10CCF5D04496019 /* CloudAPISettingsView.swift in Sources */,
+				11C04C5C8F4347C21CD1269A /* AppPhotoStore.swift in Sources */,
+				DDFE447EB811E1C3FD7BFD82 /* GalleryView.swift in Sources */,
+				7C1D45F392BC4FB642F8DDF6 /* AppTheme.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
-		A00000000000000000000012 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = { ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ANALYZER_NONNULL = YES; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; CLANG_WARN_BOOL_CONVERSION = YES; CLANG_WARN_EMPTY_BODY = YES; CLANG_WARN_UNREACHABLE_CODE = YES; COPY_PHASE_STRIP = NO; ENABLE_STRICT_OBJC_MSGSEND = YES; GCC_C_LANGUAGE_STANDARD = gnu17; GCC_NO_COMMON_BLOCKS = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.6; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_TESTABILITY = YES; GCC_DYNAMIC_NO_PIC = NO; GCC_OPTIMIZATION_LEVEL = 0; GCC_PREPROCESSOR_DEFINITIONS = ("DEBUG=1", "$(inherited)", ); MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE; ONLY_ACTIVE_ARCH = YES; SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; }; name = Debug; };
-		A00000000000000000000013 /* Release */ = {isa = XCBuildConfiguration; buildSettings = { ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ANALYZER_NONNULL = YES; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; CLANG_WARN_BOOL_CONVERSION = YES; CLANG_WARN_EMPTY_BODY = YES; CLANG_WARN_UNREACHABLE_CODE = YES; COPY_PHASE_STRIP = NO; ENABLE_STRICT_OBJC_MSGSEND = YES; GCC_C_LANGUAGE_STANDARD = gnu17; GCC_NO_COMMON_BLOCKS = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.6; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; ENABLE_NS_ASSERTIONS = NO; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; VALIDATE_PRODUCT = YES; }; name = Release; };
-		A00000000000000000000014 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = { ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = ""; ENABLE_PREVIEWS = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = OutdoorPhotoAssistant/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.6; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", ); MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.example.outdoorphotoassistant; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; }; name = Debug; };
-		A00000000000000000000015 /* Release */ = {isa = XCBuildConfiguration; buildSettings = { ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = ""; ENABLE_PREVIEWS = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = OutdoorPhotoAssistant/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.6; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", ); MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.example.outdoorphotoassistant; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; }; name = Release; };
+		A00000000000000000000012 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A00000000000000000000013 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		A00000000000000000000014 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 8;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = OutdoorPhotoAssistant/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(SRCROOT)/OutdoorPhotoAssistant/Core/Analysis",
+					"$(SRCROOT)/OutdoorPhotoAssistant/Core/Cloud",
+					"$(SRCROOT)/OutdoorPhotoAssistant/Features/Cloud",
+					"$(SRCROOT)/OutdoorPhotoAssistant/Core/Storage",
+					"$(SRCROOT)/OutdoorPhotoAssistant/Features/Gallery",
+					"$(SRCROOT)/OutdoorPhotoAssistant/App",
+				);
+				MARKETING_VERSION = 1.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.outdoorphotoassistant;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		A00000000000000000000015 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 8;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = OutdoorPhotoAssistant/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(SRCROOT)/OutdoorPhotoAssistant/Core/Analysis",
+					"$(SRCROOT)/OutdoorPhotoAssistant/Core/Cloud",
+					"$(SRCROOT)/OutdoorPhotoAssistant/Features/Cloud",
+					"$(SRCROOT)/OutdoorPhotoAssistant/Core/Storage",
+					"$(SRCROOT)/OutdoorPhotoAssistant/Features/Gallery",
+					"$(SRCROOT)/OutdoorPhotoAssistant/App",
+				);
+				MARKETING_VERSION = 1.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.outdoorphotoassistant;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		A00000000000000000000010 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000012 /* Debug */, A00000000000000000000013 /* Release */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		A00000000000000000000011 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000014 /* Debug */, A00000000000000000000015 /* Release */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A00000000000000000000010 /* Build configuration list for PBXProject "OutdoorPhotoAssistant" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000000000000000000012 /* Debug */,
+				A00000000000000000000013 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A00000000000000000000011 /* Build configuration list for PBXNativeTarget "OutdoorPhotoAssistant" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000000000000000000014 /* Debug */,
+				A00000000000000000000015 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
-
 	};
 	rootObject = A00000000000000000000001 /* Project object */;
 }

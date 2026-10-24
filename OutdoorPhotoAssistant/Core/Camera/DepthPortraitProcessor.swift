@@ -12,18 +12,25 @@ enum DepthPortraitProcessor {
         let base = CIImage(cgImage: cg).oriented(exif)
         let mask = fitExact(CIImage(cvPixelBuffer: matte.mattingImage).oriented(exif), to: base.extent)
 
-        guard let blur = CIFilter(name: "CIGaussianBlur") else { return nil }
-        blur.setValue(base, forKey: kCIInputImageKey)
-        blur.setValue(Float(max(4, base.extent.width * 0.004)), forKey: kCIInputRadiusKey)
-        guard let blurred = blur.outputImage?.cropped(to: base.extent) else { return nil }
+        guard let outCG = ImagePipeline.context.createCGImage(mask, from: base.extent) else { return nil }
+        return apply(image: image, mask: UIImage(cgImage: outCG), strength: 0.18)
+    }
 
-        guard let blend = CIFilter(name: "CIBlendWithMask") else { return nil }
-        blend.setValue(base, forKey: kCIInputImageKey)
-        blend.setValue(blurred, forKey: kCIInputBackgroundImageKey)
-        blend.setValue(mask, forKey: kCIInputMaskImageKey)
-        guard let output = blend.outputImage else { return nil }
-        guard let outCG = ImagePipeline.context.createCGImage(output, from: base.extent) else { return nil }
-        return UIImage(cgImage: outCG, scale: 1, orientation: .up)
+    /// A conservative matte-based effect, not a metric depth reconstruction.
+    /// No geometry scaling or displacement; foreground and background share one extent.
+    static func apply(image: UIImage, mask: UIImage?, strength: Double) -> UIImage? {
+        guard strength > 0.001, let mask, let cg = image.cgImage, let maskCG = mask.cgImage else { return image }
+        let base = CIImage(cgImage: cg).oriented(PhotoPostProcessor.exifOrientation(image.imageOrientation))
+        let extent = base.extent
+        let fitted = fitExact(CIImage(cgImage: maskCG), to: extent)
+        // Protect fine foreground edges and avoid dark/transparent borders.
+        let protectedMask = fitted.applyingFilter("CIMorphologyMaximum", parameters: ["inputRadius": max(1, extent.width * 0.0005)])
+            .clampedToExtent().applyingFilter("CIGaussianBlur", parameters: ["inputRadius": max(0.5, extent.width * 0.00025)]).cropped(to: extent)
+        let radius = min(12, extent.width * 0.003) * min(1, max(0, strength))
+        let blurred = base.clampedToExtent().applyingFilter("CIGaussianBlur", parameters: ["inputRadius": radius]).cropped(to: extent)
+        let output = base.applyingFilter("CIBlendWithMask", parameters: [kCIInputBackgroundImageKey: blurred, kCIInputMaskImageKey: protectedMask]).cropped(to: extent)
+        guard let out = ImagePipeline.context.createCGImage(output, from: extent) else { return nil }
+        return UIImage(cgImage: out, scale: 1, orientation: .up)
     }
 
     static func makePortraitMask(image: UIImage, matte: AVPortraitEffectsMatte) -> UIImage? {

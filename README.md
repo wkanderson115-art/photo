@@ -1,42 +1,33 @@
-# 户外拍照助手 · 整理修复版
+# 户外拍照助手 · App直连版（build 8）
 
-原生 SwiftUI iPhone 相机项目，最低 iOS 17.6，构建脚本要求 Xcode 26+。
-应用仅使用系统框架，无第三方运行依赖。
+当前方式：**iOS App直接调用DeepSeek与Seedream，不使用自建后端、不需要购买服务器或域名，也不需要开通Sign in with Apple云端登录。** 模型按使用收费；没有服务器托管月租。安装到iPhone仍需正常的Xcode签名或其他合法分发流程。
 
-**当前交付状态：已修改源码并通过静态检查，未完成 Xcode 编译、签名或 iPhone 实机验证，没有生成 IPA。**
-当前执行环境是 Debian Linux，没有 Apple SDK、Xcode 或可用远程 macOS 构建账号。
+## 配置与使用
 
-## 目录
+1. 使用Xcode打开 `OutdoorPhotoAssistant.xcodeproj`，按正常iOS流程配置签名并编译。
+2. App设置 → 云端服务，分别输入并保存自己的DeepSeek和火山方舟Key。保存不联网调用模型；Key写入本机钥匙串，保存后输入框清空、只显示已配置状态。两个Key独立删除/替换。
+3. 拍照先保存到本机图库，不自动上传。选择一张照片后，可选先看DeepSeek建议，或者跳过建议直接填写修图要求。
+4. 获取建议只调用DeepSeek；采用建议不调用Seedream。明确点“用Seedream修这张”才上传并生成。
+5. 原片和AI成片保存为不同版本，可对比、导出当前显示版本。已有相同建议或成片优先本地复用。
 
-- `OutdoorPhotoAssistant/`：18 个 Swift 文件、权限配置、隐私清单、图标。
-- `OutdoorPhotoAssistant.xcodeproj/`：Xcode 工程与共享 scheme。
-- `scripts/`：静态校验、工程生成、图标生成、Debug/Release 构建脚本。
-- `tests/main.swift`：使用真实 SmartShutterEngine 源码的决策测试，供 macOS CI 执行。
-- `.github/workflows/ios-unsigned-build.yml`：静态检查、决策测试、双配置编译、未签名 IPA 打包。
-- `reports/`：本次修复说明与实际检查日志。
-- `docs/original/`：输入包附带的历史文档和旧验证日志，不代表本次验证结果。
+## 上传、下载与费用控制
 
-## 本地静态检查
+- 建议副本最长边1280，修图副本最长边3072，JPEG质量0.9、最多15MiB；移除定位等元数据，不自动裁切，原片不动。
+- 两家Key仅随对应官方API请求发送，不把Key拼入URL，不写入UserDefaults或图库任务记录，不输出原始上游错误。
+- Seedream返回图片链接后，先落盘保存链接，再下载校验并写入图库；图片下载不附带任何API Key。下载失败时可以仅重试下载，不重新生成。同一任务即使重复保存也不会创建重复的AI版本。
+- 结果链接可能过期。没有自建后台，所以无法承诺退出App后继续生图、可靠查询供应商任务、断点续传或跨设备云端恢复。
+- 请求超时/停止等待/被系统终止时，模型可能已经执行并计费。普通按钮不会自动重发同一未完成请求；需检查平台用量后明确选择重新分析或新建修图任务，可能再次计费。不存在服务端幂等防重保证。
 
-```bash
-python -m pip install -r scripts/requirements-check.txt
-python scripts/verify.py
-python scripts/check_swift.py OutdoorPhotoAssistant
-```
+## 保留的摄影功能
 
-这些检查解析 Swift 语法、工程结构、资源与配置，不会进行 Swift 类型检查或 iOS 编译。
+简洁拍照界面、硬件支持范围内的连续变焦和自动变焦、AI导演规则与明确反馈偏好、24节摄影课程、自然精修策略、CainCamera高反差保留公式的Core Image移植及实时预览。美颜默认关闭，参数集中在设置；未回退这些摄影和界面修改。
 
-## 在 iPhone 上安装
+## 凭证保护边界
 
-有 Mac 时，用 Xcode 26+ 打开 `OutdoorPhotoAssistant.xcodeproj`，选择 iPhone，
-在 Signing & Capabilities 选择自己的 Apple 开发 Team，使用唯一 Bundle Identifier，点击 Run。
-iPhone 需按 Xcode 提示启用开发者模式并信任开发者。签名凭据应留在自己的 Mac 上。
+个人Key保存在系统钥匙串、输入与保存后隐藏，没有在App包中内置共用Key。直连方式仍不能提供服务端隔离，不能声称Key绝对不可提取；应使用自己的受限Key并设置用量额度，不要把共享商用Key硬编码进发行包。
 
-也可以将本目录的内容作为 GitHub 仓库根目录上传（必须包含隐藏的 `.github` 目录），
-在 Actions 中运行 `iOS Build (unsigned IPA)`。成功后下载 `OutdoorPhotoAssistant-unsigned-ipa`。
-这是待签名的构建产物，必须经自己的 Apple ID/开发者证书签名后才能安装；不能直接在 iPhone 上点开安装。
+旧版后端登录会话会从本机清理，直连版不再请求原后端。旧本机照片与版本保留，旧后端未取回的任务需原服务处理，不能自动转成新的付费模型请求。旧后端源码及说明仅存于 `docs/legacy-backend/`，根目录没有可自动部署的Render配置，不需要部署它。
 
-在已配置的 Mac 上执行 `bash scripts/build_unsigned_ipa.sh` 可构建 Debug、Release 并打包未签名 IPA。
-脚本会在缺少 macOS/Xcode/iOS 26 SDK 时明确退出，不会生成伪装的安装包。
+## 验证状态
 
-本次问题、修复与未验证项详见 [修复报告](reports/REPAIR_REPORT.md)。
+工程静态检查及25份App Swift、3份Swift测试语法检查通过。已更新直连接口的URLProtocol模拟测试，覆盖实际图片入参、官方地址、凭证隔离、下载不带Key、自然约束、无自动重试及错误隐藏；**当前环境没有swiftc/Xcode，测试尚未编译执行**。没有真实Key，未做真实API调用、Apple设备上的钥匙串/渲染/拍照验证或iPhone安装测试。不要将源码包当作已编译安装版。
