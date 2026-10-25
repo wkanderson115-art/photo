@@ -91,6 +91,10 @@ final class PhotoLibraryService: ObservableObject {
             await MainActor.run { self.lastSaveError = "任务结果已处理，但任务记录写入失败：" + error.localizedDescription }
         }
     }
+    @MainActor func deletePhoto(_ id: UUID) async throws {
+        try await store.deletePhoto(id)
+        records.removeAll { $0.id == id }
+    }
     func export(photoID: UUID, assetID: String) async throws {
         let bytes = try await store.preparedExport(photoID: photoID, assetID: assetID)
         try await Self.exportData([bytes])

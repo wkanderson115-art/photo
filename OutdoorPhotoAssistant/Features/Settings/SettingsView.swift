@@ -113,7 +113,7 @@ struct SettingsView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("关于与许可") {
-                    LabeledContent("版本", value: "1.1 (build 12)")
+                    LabeledContent("版本", value: "1.1 (build 14)")
                     Text("实时拍摄分析在本机完成；图库中的DeepSeek建议和Seedream修图按需联网调用。")
                     Text("固定光圈机型通过自动快门、ISO和曝光补偿适应光线。本版未实现可变物理光圈控制。")
                         .font(.footnote).foregroundStyle(.secondary)

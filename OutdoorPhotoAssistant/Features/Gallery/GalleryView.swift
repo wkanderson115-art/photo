@@ -4,6 +4,8 @@ import UIKit
 struct GalleryView: View {
     @EnvironmentObject private var library: PhotoLibraryService
     @State private var filter = "全部照片"
+    @State private var pendingDelete: UUID?
+    @State private var deleteError: String?
     private let columns = [GridItem(.flexible(), spacing: 13), GridItem(.flexible(), spacing: 13)]
     private var displayed: [AppPhotoRecord] {
         filter == "AI成片" ? library.records.filter { $0.versions.contains { $0.kind == "seedream" } } : library.records
@@ -37,6 +39,13 @@ struct GalleryView: View {
                                         }
                                     }
                                 }.buttonStyle(.plain)
+                                .overlay(alignment: .topTrailing) {
+                                    Button(role: .destructive) { pendingDelete = record.id } label: {
+                                        Image(systemName: "trash").padding(10)
+                                            .background(.regularMaterial, in: Circle())
+                                    }.padding(8).accessibilityLabel("删除照片")
+                                        .disabled(record.jobs.contains { $0.state == "running" })
+                                }
                             }
                         }
                     }
@@ -47,6 +56,22 @@ struct GalleryView: View {
             }.background(AppTheme.paper).navigationTitle("我的图库")
                 .toolbar { NavigationLink { CloudAPISettingsView() } label: { Image(systemName: "key") }.accessibilityLabel("云端服务") }
                 .onAppear { library.loadIfNeeded() }
+                .confirmationDialog("删除这张照片？", isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }), titleVisibility: .visible) {
+                    Button("删除原片及全部成片", role: .destructive) {
+                        guard let id = pendingDelete else { return }
+                        pendingDelete = nil
+                        Task {
+                            do { try await library.deletePhoto(id) }
+                            catch { deleteError = error.localizedDescription }
+                        }
+                    }
+                    Button("取消", role: .cancel) { pendingDelete = nil }
+                } message: {
+                    Text("将永久删除App图库中的原片、所有版本和建议。已导出到系统相册的照片保留。")
+                }
+                .alert("删除失败", isPresented: Binding(get: { deleteError != nil }, set: { if !$0 { deleteError = nil } })) {
+                    Button("确定") { deleteError = nil }
+                } message: { Text(deleteError ?? "") }
         }
     }
 }

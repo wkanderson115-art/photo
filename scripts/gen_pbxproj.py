@@ -306,7 +306,7 @@ def build() -> tuple[str, dict[str, str]]:
         "ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;",
         "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;",
         "CODE_SIGN_STYLE = Automatic;",
-        "CURRENT_PROJECT_VERSION = 12;",
+        "CURRENT_PROJECT_VERSION = 14;",
         "DEVELOPMENT_TEAM = \"\";",
         "ENABLE_PREVIEWS = YES;",
         "GENERATE_INFOPLIST_FILE = NO;",

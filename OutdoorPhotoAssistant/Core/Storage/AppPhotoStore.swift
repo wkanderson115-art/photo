@@ -119,6 +119,15 @@ final class AppPhotoStore {
         record.revision += 1
         try JSONEncoder().encode(record).write(to: fileURL(photoID: record.id, name: "record.json"), options: .atomic)
     }
+    func deletePhoto(_ id: UUID) async throws {
+        try await run {
+            let record = try self.read(id)
+            guard !record.jobs.contains(where: { $0.state == "running" }) else {
+                throw NSError(domain: "Gallery", code: 1, userInfo: [NSLocalizedDescriptionKey: "请等待当前图片任务结束后再删除。"])
+            }
+            try FileManager.default.removeItem(at: self.root.appendingPathComponent(id.uuidString, isDirectory: true))
+        }
+    }
     func records(recoverInterrupted: Bool = false) async throws -> [AppPhotoRecord] {
         try await run {
             try FileManager.default.createDirectory(at: self.root, withIntermediateDirectories: true)

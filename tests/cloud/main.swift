@@ -52,7 +52,7 @@ final class MockProtocol: URLProtocol {
         expect(edit.value(forHTTPHeaderField: "Authorization") == "Bearer fixture-seedream", "Seedream uses its own credential")
         expect(editBody["prompt"] as? String == prompt, "Direct edits retain natural constraints exactly once")
         expect(editBody["response_format"] as? String == "url", "Persistent result link enables download-only recovery")
-        expect(editBody["watermark"] as? Bool == true && editBody["sequential_image_generation"] as? String == "disabled", "Preserve watermark and disable batch generation")
+        expect(editBody["watermark"] as? Bool == true && editBody["sequential_image_generation"] == nil, "Preserve watermark and omit unsupported batch parameter")
         let download = try SeedreamClient.downloadRequest(URL(string: "https://fixture.example.invalid/result.jpg?signature=fixture")!)
         expect(download.value(forHTTPHeaderField: "Authorization") == nil, "Download URLs never receive API keys")
         for unsafe in ["http://example.invalid/result.jpg", "https://user:pass@example.invalid/result.jpg"] {

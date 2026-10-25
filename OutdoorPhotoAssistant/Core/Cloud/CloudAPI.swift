@@ -128,10 +128,33 @@ enum CloudHTTP {
             case 401: message = "API Key无效或已失效，请在设置中更新。"
             case 403: message = "请检查账号地区、模型权限和服务开通情况。"
             case 429: message = "请求过于频繁或已达额度限制，请检查用量后再操作。"
-            default: message = "本次请求未取得可用结果，请检查网络与平台状态；不会自动重试。"
+            case 400: message = "请求参数或图片未通过平台校验，请检查模型ID、图片规格及参数。"
+            default: message = "本次请求未取得可用结果，请检查平台状态；不会自动重试。"
             }
 
-            throw CloudAPIError.http(http.statusCode, message)
+            // Never display raw upstream messages: they can echo prompts, URLs or credentials.
+            // Use provider code/parameter only to select a fixed, safe explanation.
+            let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            let error = object?["error"] as? [String: Any]
+            let code = error?["code"] as? String ?? ""
+            let parameter = error?["param"] as? String ?? ""
+            let hint: String
+            let category = (code + " " + parameter).lowercased()
+            if category.contains("image") { hint = " 图片格式、大小、尺寸或图片内容校验失败。" }
+            else if category.contains("model") { hint = " 请核对模型ID及该Key的模型权限。" }
+            else if category.contains("balance") || category.contains("quota") { hint = " 请检查平台余额和额度。" }
+            else if category.contains("parameter") || category.contains("argument") { hint = " 存在不支持或无效的请求参数。" }
+            else { hint = "" }
+            func safeIdentifier(_ value: String?) -> String? {
+                guard let value, value.count <= 160,
+                      value.range(of: "^[A-Za-z0-9._:-]+$", options: .regularExpression) != nil,
+                      !value.lowercased().hasPrefix("sk-"),
+                      !(request.value(forHTTPHeaderField: "Authorization") ?? "").contains(value) else { return nil }
+                return value
+            }
+            let safeCode = safeIdentifier(code).map { " 错误代码：" + $0 } ?? ""
+            let requestID = safeIdentifier(http.value(forHTTPHeaderField: "x-request-id")).map { " 请求ID：" + $0 } ?? ""
+            throw CloudAPIError.http(http.statusCode, message + hint + safeCode + requestID)
         }
         guard data.count <= 40 * 1024 * 1024 else { throw CloudAPIError.oversized }
         return (data, http)
@@ -205,18 +228,20 @@ struct SeedreamClient {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw CloudAPIError.invalidInput("请先填写修图要求。") }
         let body: [String: Any] = ["model": model, "prompt": NaturalPhotoPolicy.editPrompt(prompt),
             "image": "data:image/jpeg;base64," + jpeg.base64EncodedString(), "size": "2K", "output_format": "jpeg",
-            "response_format": "url", "watermark": true, "sequential_image_generation": "disabled"]
+            "response_format": "url", "watermark": true]
         return try CloudHTTP.providerRequest(url: URL(string: "https://ark.cn-beijing.volces.com/api/v3/images/generations")!, key: key, model: model, body: body, timeout: 300)
     }
     func edit(jpeg: Data, prompt: String, key: String, model: String) async throws -> GenerationResponse {
         let (data, http) = try await CloudHTTP.send(Self.request(jpeg: jpeg, prompt: prompt, key: key, model: model), session: session)
         struct Reply: Decodable { struct Item: Decodable { let url: String? }; let data: [Item] }
-        guard let reply = try? JSONDecoder().decode(Reply.self, from: data), let text = reply.data.first?.url else { throw CloudAPIError.invalidResponse }
+        guard let reply = try? JSONDecoder().decode(Reply.self, from: data), let text = reply.data.compactMap({ $0.url }).first(where: { !$0.isEmpty }) else { throw CloudAPIError.invalidResponse }
         return GenerationResponse(imageURL: try CloudHTTP.safeImageURL(text), requestID: http.value(forHTTPHeaderField: "x-request-id"))
     }
     static func downloadRequest(_ url: URL) throws -> URLRequest {
         _ = try CloudHTTP.safeImageURL(url.absoluteString)
         var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("image/jpeg, image/png, image/*;q=0.8", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 120
         // A result/CDN URL NEVER receives either provider's API key.
         return request
