@@ -706,9 +706,13 @@ struct CameraPreview: UIViewRepresentable {
             uiView?.effectImage.isHidden = cg == nil
         }
         uiView.processor = camera.realtimePreview
+        // 滤镜画面覆盖在取景层上，前摄时两层必须采用相同的镜像方向。
+        uiView.effectImage.transform = camera.cameraPosition == .front
+            ? CGAffineTransform(scaleX: -1, y: 1) : .identity
         if let connection = uiView.previewLayer.connection, connection.isVideoMirroringSupported {
             connection.automaticallyAdjustsVideoMirroring = false
-            connection.isVideoMirrored = false
+            connection.isVideoMirrored = camera.cameraPosition == .front
+            if connection.isVideoOrientationSupported { connection.videoOrientation = .portrait }
         }
     }
 }

@@ -42,6 +42,8 @@ struct CaptureView: View {
     private var manualFilter: PhotoFilter { PhotoFilter(rawValue: manualFilterName) ?? .natural }
     @AppStorage("compositionStyle") private var compositionStyle = "自然"
     @State private var autoCaptureArmed = true
+    @State private var readySince: Date?
+    @State private var readyBox: CGRect = .zero
     @State private var showReview = false
     @State private var reviewShot: CapturedPhoto?
     @State private var reviewStyled: UIImage?
@@ -114,6 +116,14 @@ struct CaptureView: View {
                                                subject: analyzer.subject,
                                                composition: directorComposition,
                                                locked: analyzer.autoCaptureReady)
+                        }
+                        .overlay(alignment: .bottom) {
+                            if autoDirector {
+                                Text(analyzer.directorInstruction)
+                                    .font(.caption.weight(.medium)).foregroundStyle(.white)
+                                    .padding(8).background(.black.opacity(0.55), in: Capsule())
+                                    .padding(12).allowsHitTesting(false)
+                            }
                         }
                     Spacer(minLength: 0)
                     controls
@@ -219,16 +229,15 @@ struct CaptureView: View {
 
     private var reviewEventsView: some View {
         sessionEventsView
-        .onChange(of: analyzer.observationTick) { _, _ in refreshDirector() }
+        .onChange(of: analyzer.observationTick) { _, _ in refreshDirector(); attemptAutoCapture() }
         .onChange(of: autoDirector) { _, _ in directorController.reset(); refreshDirector() }
         .onChange(of: directorFraming) { _, _ in directorController.reset(); refreshDirector() }
         .onChange(of: directorComposition) { _, _ in directorController.reset(); refreshDirector() }
         .onChange(of: autoZoom) { _, _ in directorController.reset(); refreshDirector() }
         .onChange(of: analyzer.autoCaptureReady) { _, ready in
-            if ready {
-                self.attemptAutoCapture()
-            } else {
+            if !ready {
                 self.autoCaptureArmed = true
+                self.readySince = nil
             }
         }
         .onChange(of: location.periodText) { _, period in
@@ -451,7 +460,7 @@ struct CaptureView: View {
                                   stable: motion.isStable, framing: directorFraming,
                                   composition: directorComposition, preference: nil)
         input.preference = directorLearning ? DirectorPreferenceStore.shared.preference(for: DirectorEngine.context(input)) : nil
-        let manualHold = Date().timeIntervalSince(lastManualZoom) <= 8
+        let manualHold = Date().timeIntervalSince(lastManualZoom) <= 2
         let allow = autoZoom && autoComposition && !manualHold && activeRenders == 0
         let decision = directorController.evaluate(input, now: Date.timeIntervalSinceReferenceDate, allowAutomaticZoom: allow)
         analyzer.directorDecision = decision
@@ -471,16 +480,25 @@ struct CaptureView: View {
         guard !showingSettings, !showReview, isSelected, scenePhase == .active,
               autoCapture, autoCaptureArmed, analyzer.autoCaptureReady,
               pinchStartZoom == nil, sliderZoom == nil else { return }
-        let manualHold = Date().timeIntervalSince(lastManualZoom) <= 8
+        let manualHold = Date().timeIntervalSince(lastManualZoom) <= 2
         let zoomRatio = max(0.01, analyzer.directorDecision.targetZoom) / max(0.01, Double(camera.zoom))
         let zoomSettled = manualHold || !autoDirector || !autoZoom || abs(log(zoomRatio)) < 0.05
-        guard zoomSettled, !analyzer.directorDecision.shouldZoom, analyzer.autoCaptureHeld else { return }
+        guard zoomSettled, !analyzer.directorDecision.shouldZoom, analyzer.autoCaptureHeld else { readySince = nil; return }
 
         let shutter = SmartShutterEngine.decide(stability: motion.stabilityScore,
                                                  isStable: motion.isStable,
                                                  exposureScore: analyzer.qualityExposure,
                                                  sharpnessScore: analyzer.qualitySharpness)
-        guard shutter.action == .shootNow else { return }
+        guard shutter.action == .shootNow, motion.isStable,
+              analyzer.subject.rect != .zero else { readySince = nil; return }
+        let box = analyzer.subject.rect
+        if abs(box.midX - readyBox.midX) > 0.04 || abs(box.midY - readyBox.midY) > 0.04 || abs(box.height - readyBox.height) > 0.05 {
+            readySince = nil
+        }
+        if readySince == nil { readySince = Date(); readyBox = box }
+        // Continuous valid observations, not a scheduled shutter or countdown.
+        guard Date().timeIntervalSince(readySince ?? Date()) >= 1.5 else { return }
+        readySince = nil
 
         autoCaptureArmed = false
         takePhoto()

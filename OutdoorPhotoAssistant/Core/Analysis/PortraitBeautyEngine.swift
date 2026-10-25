@@ -247,7 +247,7 @@ enum CainBeautyKernels {
         }
         """)
     static func apply(source: CIImage, blurred: CIImage, intensity: Double) -> CIImage {
-        guard let high = highPass?.apply(extent: source.extent, arguments: [source, blurred]) else { return source }
+        guard let high = highPass?.apply(extent: source.extent, arguments: [source, blurred]) else { return source.applyingFilter("CIDissolveTransition", parameters: ["inputTargetImage": blurred, "inputTime": min(0.30, max(0, intensity))]) }
         let detail = high.clampedToExtent().applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: max(1, source.extent.width / 600)]).cropped(to: source.extent)
         return adjust?.apply(extent: source.extent, arguments: [source, blurred, detail, intensity]) ?? source
     }
@@ -472,8 +472,9 @@ final class RealtimePreviewProcessor {
     func configure(options: PhotoRenderOptions, enabled: Bool, sink: @escaping (CGImage?) -> Void) {
         lock.lock()
         let changed = self.enabled != enabled || self.options.filter != options.filter || self.options.grade != options.grade || self.options.style != options.style || self.options.beauty != options.beauty || self.options.filterStrength != options.filterStrength
+        let wasEnabled = self.enabled
         self.options = options; self.enabled = enabled; self.sink = sink
-        if changed { generation += 1 }
+        if changed && wasEnabled != enabled { generation += 1 }
         lock.unlock()
         if !enabled { sink(nil) }
     }

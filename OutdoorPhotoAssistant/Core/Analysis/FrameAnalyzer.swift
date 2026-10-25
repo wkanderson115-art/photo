@@ -124,25 +124,26 @@ final class FrameAnalyzer: ObservableObject {
         let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation, options: [:])
         var requests: [VNImageBasedRequest] = [faceRequest, humanRequest, saliencyRequest, horizonRequest]
         if classify { requests.append(classifyRequest) }
-        do { try handler.perform(requests) }
-        catch {
-            DispatchQueue.main.async {
-                self.directorObservation = DirectorObservation()
-                self.observationTick += 1
+        // One unsupported/failed Vision request must not discard faces and people.
+        var succeeded = Set<ObjectIdentifier>()
+        for request in requests {
+            do { try handler.perform([request]); succeeded.insert(ObjectIdentifier(request)) }
+            catch {
+                // A failed request is treated as absent evidence for this frame.
+                continue
             }
-            return
         }
 
         if classify {
-            lastLabels = classifyRequest.results ?? []
+            lastLabels = succeeded.contains(ObjectIdentifier(classifyRequest)) ? classifyRequest.results ?? [] : []
         }
 
         // Vision confidence around 0.5 is common for a partially visible person.
         // Keep the area guards to reject tiny noise, then let temporal dwell stop
         // one-frame detections from moving the lens.
-        let faces = (faceRequest.results ?? []).filter { $0.confidence >= 0.50 && $0.boundingBox.width * $0.boundingBox.height > 0.002 }
-        let humans = (humanRequest.results ?? []).filter { $0.confidence >= 0.50 && $0.boundingBox.width * $0.boundingBox.height > 0.01 }
-        let salientObjects = saliencyRequest.results?.first?.salientObjects ?? []
+        let faces = (succeeded.contains(ObjectIdentifier(faceRequest)) ? faceRequest.results ?? [] : []).filter { $0.confidence >= 0.50 && $0.boundingBox.width * $0.boundingBox.height > 0.002 }
+        let humans = (succeeded.contains(ObjectIdentifier(humanRequest)) ? humanRequest.results ?? [] : []).filter { $0.confidence >= 0.50 && $0.boundingBox.width * $0.boundingBox.height > 0.01 }
+        let salientObjects = succeeded.contains(ObjectIdentifier(saliencyRequest)) ? saliencyRequest.results?.first?.salientObjects ?? [] : []
         var info = SubjectInfo()
         var kind = "none"
         let personCount = max(faces.count, humans.count)
@@ -160,7 +161,7 @@ final class FrameAnalyzer: ObservableObject {
             kind = "object"
         }
 
-        let horizon = Double(horizonRequest.results?.first?.angle ?? 0)
+        let horizon = succeeded.contains(ObjectIdentifier(horizonRequest)) ? Double(horizonRequest.results?.first?.angle ?? 0) : 0
         let scene = Self.classifyScene(labels: lastLabels, personConfidence: personConfidence)
 
         // 场景滞回：连续 3 帧同场景才切换，避免 人物/风景 反复跳变
@@ -269,7 +270,7 @@ final class FrameAnalyzer: ObservableObject {
             }
 
             let brightness = Self.measureImageBrightness(cgImage)
-            let horizon = Double(horizonRequest.results?.first?.angle ?? 0)
+            let horizon = succeeded.contains(ObjectIdentifier(horizonRequest)) ? Double(horizonRequest.results?.first?.angle ?? 0) : 0
             var aesthetics: Float?
             if #available(iOS 18.0, *),
                let request = aestheticsRequest as? VNCalculateImageAestheticsScoresRequest {
