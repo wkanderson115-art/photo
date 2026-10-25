@@ -242,7 +242,7 @@ enum DirectorEngine {
         if person { decision.maximumFilterStrength = min(0.5, decision.maximumFilterStrength) }
         if o.saturation > 0.48 || decision.protectHighlights { decision.maximumFilterStrength = min(0.4, decision.maximumFilterStrength) }
         decision.evidence.append(evidence("滤镜", "自然色与肤色优先", "滤镜：" + decision.filter, "按场景和用户反馈选风格，对高饱和与人像限制强度"))
-        guard let box = o.subject, box.valid, o.confidence >= 0.65 else {
+        guard let box = o.subject, box.valid, o.confidence >= 0.50 else {
             decision.evidence.append(evidence("人物定位", "可靠主体门控", "未检测到可靠主体", "保持当前倍率，不根据猜测自动追焦放大"))
             return decision
         }
@@ -287,7 +287,10 @@ enum DirectorEngine {
             if o.subjectBrightness > 0.9 && input.scene == "日落" && candidate > zoom { continue }
             if score(candidate) > bestScore + 0.025 { best = candidate; bestScore = score(candidate) }
         }
-        let canZoom = input.stable && abs(o.horizon) < 0.14 && needsChange
+        // Zoom is already protected by confidence, four-sample dwell, cooldown,
+        // edge veto and image-quality checks. Requiring the gyroscope's strict
+        // `isStable` flag here made handheld auto zoom almost impossible to enter.
+        let canZoom = abs(o.horizon) < 0.14 && needsChange
         decision.targetZoom = canZoom ? best : max(lower, min(upper, zoom))
         decision.shouldZoom = canZoom && abs(log(decision.targetZoom / zoom)) > 0.045
         let action = decision.shouldZoom ? (best > zoom ? "小幅推近，达到主体占比" : "小幅拉远，保留人物和留白") : "保持当前倍率"
@@ -317,7 +320,7 @@ struct DirectorController {
     mutating func reset() { self = DirectorController() }
     mutating func evaluate(_ input: DirectorInput, now: Double, allowAutomaticZoom: Bool) -> DirectorDecision {
         var filtered = input
-        guard let box = input.observation.subject, box.valid, input.observation.confidence >= 0.65 else {
+        guard let box = input.observation.subject, box.valid, input.observation.confidence >= 0.50 else {
             smoother = nil; lastBox = nil; streak = 0
             return DirectorEngine.evaluate(input)
         }

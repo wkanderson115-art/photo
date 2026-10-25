@@ -137,8 +137,11 @@ final class FrameAnalyzer: ObservableObject {
             lastLabels = classifyRequest.results ?? []
         }
 
-        let faces = (faceRequest.results ?? []).filter { $0.confidence >= 0.60 && $0.boundingBox.width * $0.boundingBox.height > 0.002 }
-        let humans = (humanRequest.results ?? []).filter { $0.confidence >= 0.60 && $0.boundingBox.width * $0.boundingBox.height > 0.01 }
+        // Vision confidence around 0.5 is common for a partially visible person.
+        // Keep the area guards to reject tiny noise, then let temporal dwell stop
+        // one-frame detections from moving the lens.
+        let faces = (faceRequest.results ?? []).filter { $0.confidence >= 0.50 && $0.boundingBox.width * $0.boundingBox.height > 0.002 }
+        let humans = (humanRequest.results ?? []).filter { $0.confidence >= 0.50 && $0.boundingBox.width * $0.boundingBox.height > 0.01 }
         let salientObjects = saliencyRequest.results?.first?.salientObjects ?? []
         var info = SubjectInfo()
         var kind = "none"
@@ -148,7 +151,7 @@ final class FrameAnalyzer: ObservableObject {
             // Preserve every detected person, and prefer body bounds to a head-only crop.
             let rectangles = humans.map { $0.boundingBox } + faces.map { $0.boundingBox }
             let union = rectangles.dropFirst().reduce(rectangles[0]) { $0.union($1) }
-            let confidence = (humans.map { $0.confidence } + faces.map { $0.confidence }).min() ?? 0
+            let confidence = (humans.map { $0.confidence } + faces.map { $0.confidence }).max() ?? 0
             info = SubjectInfo(type: "人物", rect: union, confidence: confidence)
             personConfidence = Double(confidence)
             kind = personCount > 1 ? "group" : humans.isEmpty ? "face" : "body"

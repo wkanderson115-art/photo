@@ -10,12 +10,12 @@ struct CaptureView: View {
     @EnvironmentObject var location: LocationService
     @EnvironmentObject var library: PhotoLibraryService
 
-    @AppStorage("showGrid") private var showGrid = false
+    @AppStorage("showGrid") private var showGrid = true
     @AppStorage("autoReview") private var autoReview = true
     @AppStorage("autoScene") private var autoScene = true
     @AppStorage("autoFilter") private var autoFilter = true
     @AppStorage("autoComposition") private var autoComposition = true
-    @AppStorage("autoCapture") private var autoCapture = false
+    @AppStorage("autoCapture") private var autoCapture = true
     @AppStorage("saveBoth") private var saveBoth = true
     @AppStorage("highQuality") private var highQuality = true
 
@@ -32,8 +32,8 @@ struct CaptureView: View {
     @AppStorage("autoZoom") private var autoZoom = true
     @State private var lastManualZoom = Date.distantPast
     @AppStorage("realtimeEffects") private var realtimeEffects = true
-    @AppStorage("liveBeauty") private var liveBeauty = false
-    @AppStorage("liveBeautyStrength") private var liveBeautyStrength = 0.10
+    @AppStorage("liveBeauty") private var liveBeauty = true
+    @AppStorage("liveBeautyStrength") private var liveBeautyStrength = 0.16
     @AppStorage("filterStrength") private var filterStrength = 0.55
     @State private var shotMetrics: (exposure: Int, sharpness: Int, composition: Int)?
     @State private var captureOptions: PhotoRenderOptions?
@@ -41,9 +41,7 @@ struct CaptureView: View {
     @AppStorage("manualFilter") private var manualFilterName = "自然"
     private var manualFilter: PhotoFilter { PhotoFilter(rawValue: manualFilterName) ?? .natural }
     @AppStorage("compositionStyle") private var compositionStyle = "自然"
-    @State private var countdown = 0
-    @State private var autoShotPending = false
-    @State private var autoShotTask: Task<Void, Never>?
+    @State private var autoCaptureArmed = true
     @State private var showReview = false
     @State private var reviewShot: CapturedPhoto?
     @State private var reviewStyled: UIImage?
@@ -59,7 +57,7 @@ struct CaptureView: View {
     private var effectiveScene: String { autoScene ? analyzer.detectedScene : manualScene }
     private var effectiveFilter: PhotoFilter {
         guard autoFilter else { return manualFilter }
-        if autoDirector { return PhotoFilter(rawValue: analyzer.directorDecision.filter) ?? .natural }
+        if autoDirector { return .natural } // Preserve scene hues; adaptive grade supplies vividness.
         guard !autoScene || analyzer.sceneConfidence >= 0.65 else { return .natural }
         return PhotoFilter.recommended(scene: effectiveScene, brightness: analyzer.brightness, period: location.periodText)
     }
@@ -70,10 +68,14 @@ struct CaptureView: View {
         if autoDirector {
             let evidence = analyzer.directorObservation
             grade.temperature *= evidence.personCount > 0 ? 0 : 0.5
-            grade.saturation = evidence.saturation > 0.48 ? 1 : min(1.06, grade.saturation)
-            grade.contrast = min(1.06, grade.contrast)
-            grade.highlights = analyzer.directorDecision.protectHighlights ? -10 : min(0, grade.highlights)
-            grade.shadows = analyzer.directorDecision.liftShadows ? 5 : min(3, grade.shadows)
+            let measured = evidence.saturation
+            let person = evidence.personCount > 0
+            grade.saturation = measured > 0.48 ? 1.02 : measured < 0.12 ? 1.04 : person ? 1.08 : 1.16
+            grade.temperature = 0 // Do not replace the actual scene light with a preset cast.
+            grade.tint = 0
+            grade.contrast = evidence.brightness < 0.16 ? 1.03 : 1.08
+            grade.highlights = analyzer.directorDecision.protectHighlights ? -6 : 0
+            grade.shadows = analyzer.directorDecision.liftShadows ? 3 : 0
         }
         return grade
     }
@@ -107,12 +109,11 @@ struct CaptureView: View {
                                 .onEnded { _ in pinchStartZoom = nil }
                         )
                         .overlay {
-                            CompositionOverlay(showGrid: showGrid)
-                        }
-                        .overlay {
-                            if countdown > 0 {
-                                Text("\(countdown)").font(.system(size: 64, weight: .light))
-                            }
+                            CompositionOverlay(showGrid: showGrid || autoComposition,
+                                               automaticFraming: autoComposition && autoDirector,
+                                               subject: analyzer.subject,
+                                               composition: directorComposition,
+                                               locked: analyzer.autoCaptureReady)
                         }
                     Spacer(minLength: 0)
                     controls
@@ -173,7 +174,6 @@ struct CaptureView: View {
             self.camera.stop()
             self.motion.stop()
             self.location.stop()
-            self.autoShotTask?.cancel()
             self.toastTask?.cancel()
         }
     }
@@ -189,7 +189,6 @@ struct CaptureView: View {
                 self.camera.stop()
                 self.motion.stop()
                 self.location.stop()
-                self.autoShotTask?.cancel()
             }
         }
         .onChange(of: isSelected) { _, selected in
@@ -201,22 +200,15 @@ struct CaptureView: View {
                 self.camera.stop()
                 self.motion.stop()
                 self.location.stop()
-                self.autoShotTask?.cancel()
             }
         }
         .onChange(of: showReview) { _, showing in
             if showing {
-                autoShotTask?.cancel()
-                countdown = 0
-                autoShotPending = false
                 camera.stop()
             } else if isSelected && scenePhase == .active && !showingSettings { camera.start() }
         }
         .onChange(of: showingSettings) { _, showing in
             if showing {
-                autoShotTask?.cancel()
-                countdown = 0
-                autoShotPending = false
                 camera.stop()
             } else if isSelected && scenePhase == .active { camera.start() }
         }
@@ -233,18 +225,20 @@ struct CaptureView: View {
         .onChange(of: directorComposition) { _, _ in directorController.reset(); refreshDirector() }
         .onChange(of: autoZoom) { _, _ in directorController.reset(); refreshDirector() }
         .onChange(of: analyzer.autoCaptureReady) { _, ready in
-            if ready { self.startCountdown() }
+            if ready {
+                self.attemptAutoCapture()
+            } else {
+                self.autoCaptureArmed = true
+            }
         }
         .onChange(of: location.periodText) { _, period in
             self.analyzer.setPeriod(period)
         }
         .onChange(of: autoCapture) { _, enabled in
             if !enabled {
-                self.autoShotTask?.cancel()
-                self.countdown = 0
-                self.autoShotPending = false
+                self.autoCaptureArmed = true
             } else if self.analyzer.autoCaptureReady {
-                self.startCountdown()
+                self.attemptAutoCapture()
             }
         }
         .onChange(of: portraitDepth) { _, enabled in camera.setDepthDelivery(enabled) }
@@ -458,7 +452,7 @@ struct CaptureView: View {
                                   composition: directorComposition, preference: nil)
         input.preference = directorLearning ? DirectorPreferenceStore.shared.preference(for: DirectorEngine.context(input)) : nil
         let manualHold = Date().timeIntervalSince(lastManualZoom) <= 8
-        let allow = autoZoom && autoComposition && !manualHold && countdown == 0 && activeRenders == 0
+        let allow = autoZoom && autoComposition && !manualHold && activeRenders == 0
         let decision = directorController.evaluate(input, now: Date.timeIntervalSinceReferenceDate, allowAutomaticZoom: allow)
         analyzer.directorDecision = decision
         analyzer.recommendedZoom = decision.targetZoom
@@ -467,38 +461,29 @@ struct CaptureView: View {
         analyzer.framingHint = decision.evidence.first(where: { $0.domain == "构图" })?.action ?? "等待可靠主体"
         camera.applyExposureCompensation(brightness: observation.brightness, directorBias: Float(decision.exposureBias))
         if decision.shouldZoom { camera.setZoom(CGFloat(decision.targetZoom)) }
+        // Every new observation revalidates the whole shutter gate. There is no
+        // fixed delay: the first frame where composition, zoom, exposure,
+        // sharpness and motion are simultaneously ready fires immediately.
+        if analyzer.autoCaptureReady { attemptAutoCapture() }
     }
 
-    private func startCountdown() {
-        guard !showingSettings, !showReview, isSelected, scenePhase == .active, autoCapture, !autoShotPending else { return }
-        autoShotPending = true
-        autoShotTask?.cancel()
-        self.autoShotTask = Task { @MainActor in
-            for value in [3, 2, 1] {
-                self.countdown = value
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                if Task.isCancelled {
-                    self.countdown = 0
-                    self.autoShotPending = false
-                    return
-                }
-            }
-            self.countdown = 0
+    private func attemptAutoCapture() {
+        guard !showingSettings, !showReview, isSelected, scenePhase == .active,
+              autoCapture, autoCaptureArmed, analyzer.autoCaptureReady,
+              pinchStartZoom == nil, sliderZoom == nil else { return }
+        let manualHold = Date().timeIntervalSince(lastManualZoom) <= 8
+        let zoomRatio = max(0.01, analyzer.directorDecision.targetZoom) / max(0.01, Double(camera.zoom))
+        let zoomSettled = manualHold || !autoDirector || !autoZoom || abs(log(zoomRatio)) < 0.05
+        guard zoomSettled, !analyzer.directorDecision.shouldZoom, analyzer.autoCaptureHeld else { return }
 
-            let held = self.analyzer.autoCaptureHeld
-            let decision = SmartShutterEngine.decide(stability: self.motion.stabilityScore,
-                                                     isStable: self.motion.isStable,
-                                                     exposureScore: self.analyzer.qualityExposure,
-                                                     sharpnessScore: self.analyzer.qualitySharpness)
-            let directorReady = (!self.autoDirector || self.analyzer.directorDecision.ready) && self.pinchStartZoom == nil && self.sliderZoom == nil
-            if directorReady && !self.showingSettings && !self.showReview && self.isSelected && self.scenePhase == .active && self.autoCapture && held && decision.action == .shootNow {
-                self.takePhoto()
+        let shutter = SmartShutterEngine.decide(stability: motion.stabilityScore,
+                                                 isStable: motion.isStable,
+                                                 exposureScore: analyzer.qualityExposure,
+                                                 sharpnessScore: analyzer.qualitySharpness)
+        guard shutter.action == .shootNow else { return }
 
-            } else {
-
-            }
-            self.autoShotPending = false
-        }
+        autoCaptureArmed = false
+        takePhoto()
     }
 
     private func openAppSettings() {

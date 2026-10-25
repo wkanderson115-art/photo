@@ -197,7 +197,7 @@ def build() -> tuple[str, dict[str, str]]:
     )
     for parent, children in GROUP_HIERARCHY.items():
         if parent == "":
-            continue  # The source group above also owns the plist and assets.
+            continue  # Keep the source group with its plist and assets.
         child_ids = " ".join(f"{group_ids[child]} /* {child.split('/')[-1]} */," for child in children)
         parent_path = parent.split("/")[-1] if parent else ""
         parent_id = source_group if parent == "" else group_ids[parent]
@@ -306,7 +306,7 @@ def build() -> tuple[str, dict[str, str]]:
         "ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;",
         "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;",
         "CODE_SIGN_STYLE = Automatic;",
-        "CURRENT_PROJECT_VERSION = 8;",
+        "CURRENT_PROJECT_VERSION = 12;",
         "DEVELOPMENT_TEAM = \"\";",
         "ENABLE_PREVIEWS = YES;",
         "GENERATE_INFOPLIST_FILE = NO;",

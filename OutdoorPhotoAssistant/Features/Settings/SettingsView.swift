@@ -7,13 +7,13 @@ struct SettingsView: View {
     @AppStorage("directorLearning") private var directorLearning = true
     @AppStorage("directorFraming") private var directorFraming = "自动"
     @AppStorage("directorComposition") private var directorComposition = "自动"
-    @AppStorage("showGrid") private var showGrid = false
+    @AppStorage("showGrid") private var showGrid = true
     @AppStorage("autoReview") private var autoReview = true
     @AppStorage("autoScene") private var autoScene = true
     @AppStorage("autoFilter") private var autoFilter = true
     @AppStorage("autoComposition") private var autoComposition = true
     @AppStorage("autoZoom") private var autoZoom = true
-    @AppStorage("autoCapture") private var autoCapture = false
+    @AppStorage("autoCapture") private var autoCapture = true
     @AppStorage("exportToSystemAlbum") private var exportToSystemAlbum = false
     @AppStorage("saveBoth") private var saveBoth = true
     @AppStorage("portraitDepth") private var portraitDepth = false
@@ -22,8 +22,8 @@ struct SettingsView: View {
     @AppStorage("manualFilter") private var manualFilterName = "自然"
     @AppStorage("compositionStyle") private var compositionStyle = "自然"
     @AppStorage("realtimeEffects") private var realtimeEffects = true
-    @AppStorage("liveBeauty") private var liveBeauty = false
-    @AppStorage("liveBeautyStrength") private var liveBeautyStrength = 0.10
+    @AppStorage("liveBeauty") private var liveBeauty = true
+    @AppStorage("liveBeautyStrength") private var liveBeautyStrength = 0.16
     @AppStorage("filterStrength") private var filterStrength = 0.55
 
     var body: some View {
@@ -63,7 +63,7 @@ struct SettingsView: View {
                     }
                     Toggle("自动取景", isOn: $autoComposition)
                     Toggle("自动变焦", isOn: $autoZoom).disabled(!autoComposition || !autoDirector)
-                    Toggle("构图稳定后自动拍摄", isOn: $autoCapture)
+                    Toggle("构图达标后自动拍摄", isOn: $autoCapture)
                 }
                 Section {
                     Toggle("实时预览效果", isOn: $realtimeEffects)
@@ -113,6 +113,7 @@ struct SettingsView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("关于与许可") {
+                    LabeledContent("版本", value: "1.1 (build 12)")
                     Text("实时拍摄分析在本机完成；图库中的DeepSeek建议和Seedream修图按需联网调用。")
                     Text("固定光圈机型通过自动快门、ISO和曝光补偿适应光线。本版未实现可变物理光圈控制。")
                         .font(.footnote).foregroundStyle(.secondary)
