@@ -15,18 +15,35 @@ struct CaptureView: View {
     @AppStorage("autoScene") private var autoScene = true
     @AppStorage("autoFilter") private var autoFilter = true
     @AppStorage("autoComposition") private var autoComposition = true
-    @AppStorage("autoCapture") private var autoCapture = false
+    @AppStorage("autoCapture") private var autoCapture = true
     @AppStorage("saveBoth") private var saveBoth = true
-    @AppStorage("highQuality") private var highQuality = false
+    @AppStorage("highQuality") private var highQuality = true
 
-    @State private var manualScene = "风景"
-    @State private var manualFilter: PhotoFilter = .natural
-    @State private var compositionStyle = "自然"
-    @State private var countdown = 0
-    @State private var autoShotPending = false
-    @State private var autoShotTask: Task<Void, Never>?
-    @State private var autoLensTask: Task<Void, Never>?
-    @State private var lastAutoScene = ""
+    @AppStorage("directorLearning") private var directorLearning = true
+    @AppStorage("autoDirector") private var autoDirector = true
+    @AppStorage("directorFraming") private var directorFraming = "自动"
+    @AppStorage("directorComposition") private var directorComposition = "自动"
+    @State private var directorController = DirectorController()
+    @State private var showZoomControl = false
+    @State private var pinchStartZoom: CGFloat?
+    @State private var sliderZoom: Double?
+    @AppStorage("portraitDepth") private var portraitDepth = false
+    @State private var showingSettings = false
+    @AppStorage("autoZoom") private var autoZoom = true
+    @State private var lastManualZoom = Date.distantPast
+    @AppStorage("realtimeEffects") private var realtimeEffects = true
+    @AppStorage("liveBeauty") private var liveBeauty = true
+    @AppStorage("liveBeautyStrength") private var liveBeautyStrength = 0.16
+    @AppStorage("filterStrength") private var filterStrength = 0.55
+    @State private var shotMetrics: (exposure: Int, sharpness: Int, composition: Int)?
+    @State private var captureOptions: PhotoRenderOptions?
+    @AppStorage("manualScene") private var manualScene = "风景"
+    @AppStorage("manualFilter") private var manualFilterName = "自然"
+    private var manualFilter: PhotoFilter { PhotoFilter(rawValue: manualFilterName) ?? .natural }
+    @AppStorage("compositionStyle") private var compositionStyle = "自然"
+    @State private var autoCaptureArmed = true
+    @State private var readySince: Date?
+    @State private var readyBox: CGRect = .zero
     @State private var showReview = false
     @State private var reviewShot: CapturedPhoto?
     @State private var reviewStyled: UIImage?
@@ -38,36 +55,79 @@ struct CaptureView: View {
     @State private var toastTask: Task<Void, Never>?
     @State private var lastToken = UUID()
 
-    private let scenes = ["人物", "风景", "建筑", "日落", "夜景", "花草", "海边", "汽车", "自拍"]
-    private let styles = ["自然", "电影", "主体"]
 
     private var effectiveScene: String { autoScene ? analyzer.detectedScene : manualScene }
-    private var effectiveFilter: PhotoFilter { autoFilter ? analyzer.recommendedFilter : manualFilter }
-    private var effectiveGrade: ColorGrade { autoFilter ? analyzer.autoGrade : ColorGrade() }
+    private var effectiveFilter: PhotoFilter {
+        guard autoFilter else { return manualFilter }
+        if autoDirector { return .natural } // Preserve scene hues; adaptive grade supplies vividness.
+        guard !autoScene || analyzer.sceneConfidence >= 0.65 else { return .natural }
+        return PhotoFilter.recommended(scene: effectiveScene, brightness: analyzer.brightness, period: location.periodText)
+    }
+    private var effectiveGrade: ColorGrade {
+        guard autoFilter, !autoScene || analyzer.sceneConfidence >= 0.65 else { return ColorGrade() }
+        var grade = ColorGrade.automatic(scene: effectiveScene, brightness: analyzer.brightness,
+                                         period: location.periodText, confidence: autoScene ? analyzer.sceneConfidence : 1)
+        if autoDirector {
+            let evidence = analyzer.directorObservation
+            grade.temperature *= evidence.personCount > 0 ? 0 : 0.5
+            let measured = evidence.saturation
+            let person = evidence.personCount > 0
+            grade.saturation = measured > 0.48 ? 1.02 : measured < 0.12 ? 1.04 : person ? 1.08 : 1.16
+            grade.temperature = 0 // Do not replace the actual scene light with a preset cast.
+            grade.tint = 0
+            grade.contrast = evidence.brightness < 0.16 ? 1.03 : 1.08
+            grade.highlights = analyzer.directorDecision.protectHighlights ? -6 : 0
+            grade.shadows = analyzer.directorDecision.liftShadows ? 3 : 0
+        }
+        return grade
+    }
 
-    var body: some View {
+    var body: some View { reviewEventsView }
+
+    private var baseView: some View {
         ZStack {
-            CameraPreview(camera: camera)
-                .ignoresSafeArea()
-
-            CompositionOverlay(subject: analyzer.subject,
-                               motion: motion,
-                               scene: effectiveScene,
-                               showGrid: showGrid,
-                               horizonAngle: analyzer.horizonAngle,
-                               framingHint: analyzer.framingHint,
-                               frameAspectRatio: analyzer.frameAspectRatio)
-                .ignoresSafeArea()
-
-            VStack(spacing: 0) {
-                topBar
-                Spacer(minLength: 10)
-                DirectorCard(analyzer: analyzer,
-                             camera: camera,
-                             countdown: countdown,
-                             autoCapture: autoCapture)
-                QualityCard(analyzer: analyzer)
-                controls
+            Color.black.ignoresSafeArea()
+            GeometryReader { geo in
+                VStack(spacing: 12) {
+                    HStack {
+                        Spacer()
+                        Button { showingSettings = true } label: {
+                            Image(systemName: "slider.horizontal.3")
+                                .font(.system(size: 20)).frame(width: 44, height: 44)
+                        }.accessibilityLabel("拍摄设置").foregroundStyle(.white)
+                            .disabled(activeRenders > 0)
+                    }.padding(.horizontal, 16)
+                    Spacer(minLength: 0)
+                    CameraPreview(camera: camera, options: currentRenderOptions(), effectsEnabled: realtimeEffects)
+                        .frame(width: min(geo.size.width, max(120, geo.size.height - (showZoomControl ? 244 : 200)) * 0.75),
+                               height: min(geo.size.width / 0.75, max(160, geo.size.height - (showZoomControl ? 244 : 200))))
+                        .simultaneousGesture(
+                            MagnificationGesture()
+                                .onChanged { scale in
+                                    if pinchStartZoom == nil { pinchStartZoom = camera.zoom }
+                                    lastManualZoom = Date()
+                                    camera.setZoom((pinchStartZoom ?? camera.zoom) * scale)
+                                }
+                                .onEnded { _ in pinchStartZoom = nil }
+                        )
+                        .overlay {
+                            CompositionOverlay(showGrid: showGrid || autoComposition,
+                                               automaticFraming: autoComposition && autoDirector,
+                                               subject: analyzer.subject,
+                                               composition: directorComposition,
+                                               locked: analyzer.autoCaptureReady)
+                        }
+                        .overlay(alignment: .bottom) {
+                            if autoDirector {
+                                Text(analyzer.directorInstruction)
+                                    .font(.caption.weight(.medium)).foregroundStyle(.white)
+                                    .padding(8).background(.black.opacity(0.55), in: Capsule())
+                                    .padding(12).allowsHitTesting(false)
+                            }
+                        }
+                    Spacer(minLength: 0)
+                    controls
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
 
             if let toast {
@@ -104,8 +164,16 @@ struct CaptureView: View {
                 .padding(.top, 90)
             }
         }
+        .sheet(isPresented: $showingSettings) {
+            SettingsView(isPresentedModally: true).preferredColorScheme(.light)
+        }
+    }
+
+    private var lifecycleView: some View {
+        baseView
         .onAppear {
             guard self.isSelected else { return }
+            self.camera.setDepthDelivery(self.portraitDepth)
             self.camera.setHighQualityMode(self.highQuality)
             self.camera.start()
             self.motion.start()
@@ -116,12 +184,14 @@ struct CaptureView: View {
             self.camera.stop()
             self.motion.stop()
             self.location.stop()
-            self.autoShotTask?.cancel()
-            self.autoLensTask?.cancel()
             self.toastTask?.cancel()
         }
+    }
+
+    private var sessionEventsView: some View {
+        lifecycleView
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active && self.isSelected {
+            if phase == .active && self.isSelected && !self.showingSettings && !self.showReview {
                 self.camera.start()
                 self.motion.start()
                 self.location.start()
@@ -129,12 +199,10 @@ struct CaptureView: View {
                 self.camera.stop()
                 self.motion.stop()
                 self.location.stop()
-                self.autoShotTask?.cancel()
-                self.autoLensTask?.cancel()
             }
         }
         .onChange(of: isSelected) { _, selected in
-            if selected && self.scenePhase == .active {
+            if selected && self.scenePhase == .active && !self.showingSettings && !self.showReview {
                 self.camera.start()
                 self.motion.start()
                 self.location.start()
@@ -142,33 +210,52 @@ struct CaptureView: View {
                 self.camera.stop()
                 self.motion.stop()
                 self.location.stop()
-                self.autoShotTask?.cancel()
-                self.autoLensTask?.cancel()
             }
+        }
+        .onChange(of: showReview) { _, showing in
+            if showing {
+                camera.stop()
+            } else if isSelected && scenePhase == .active && !showingSettings { camera.start() }
+        }
+        .onChange(of: showingSettings) { _, showing in
+            if showing {
+                camera.stop()
+            } else if isSelected && scenePhase == .active { camera.start() }
         }
         .onChange(of: camera.photoToken) { _, _ in
             self.processLatestPhoto()
         }
-        .onChange(of: analyzer.brightness) { _, value in
-            self.camera.applyExposureCompensation(brightness: value)
-        }
-        .onChange(of: analyzer.detectedScene) { _, scene in
-            self.handleSceneChange(scene)
-        }
+    }
+
+    private var reviewEventsView: some View {
+        sessionEventsView
+        .onChange(of: analyzer.observationTick) { _, _ in refreshDirector(); attemptAutoCapture() }
+        .onChange(of: autoDirector) { _, _ in directorController.reset(); refreshDirector() }
+        .onChange(of: directorFraming) { _, _ in directorController.reset(); refreshDirector() }
+        .onChange(of: directorComposition) { _, _ in directorController.reset(); refreshDirector() }
+        .onChange(of: autoZoom) { _, _ in directorController.reset(); refreshDirector() }
         .onChange(of: analyzer.autoCaptureReady) { _, ready in
-            if ready { self.startCountdown() }
+            if !ready {
+                self.autoCaptureArmed = true
+                self.readySince = nil
+            }
         }
         .onChange(of: location.periodText) { _, period in
             self.analyzer.setPeriod(period)
         }
         .onChange(of: autoCapture) { _, enabled in
             if !enabled {
-                self.autoShotTask?.cancel()
-                self.countdown = 0
-                self.autoShotPending = false
+                self.autoCaptureArmed = true
             } else if self.analyzer.autoCaptureReady {
-                self.startCountdown()
+                self.attemptAutoCapture()
             }
+        }
+        .onChange(of: portraitDepth) { _, enabled in camera.setDepthDelivery(enabled) }
+        .onChange(of: camera.cameraPosition) { _, _ in
+            sliderZoom = nil
+            pinchStartZoom = nil
+            directorController.reset()
+            analyzer.directorObservation = DirectorObservation()
         }
         .onChange(of: highQuality) { _, value in
             self.camera.setHighQualityMode(value)
@@ -192,157 +279,70 @@ struct CaptureView: View {
         }
     }
 
-    // MARK: - 顶栏
-
-    private var topBar: some View {
-        HStack(spacing: 8) {
-            Menu {
-                ForEach(self.scenes, id: \.self) { scene in
-                    Button(scene) { self.manualScene = scene }
-                }
-            } label: {
-                Label(self.autoScene ? "自动·\(self.effectiveScene)" : self.manualScene,
-                      systemImage: "camera.metering.center.weighted")
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(.ultraThinMaterial)
-            .clipShape(Capsule())
-
-            Spacer()
-
-            VStack(alignment: .trailing, spacing: 1) {
-                Text(location.periodText.isEmpty ? "光线判断中" : location.periodText)
-                    .font(.caption.weight(.bold))
-                Text("识别 \(Int(analyzer.sceneConfidence * 100))%")
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.7))
-            }
-
-            Button {
-                self.camera.switchCamera()
-            } label: {
-                Image(systemName: "camera.rotate")
-                    .padding(8)
-                    .background(.ultraThinMaterial)
-                    .clipShape(Circle())
-            }
-        }
-        .padding(.horizontal)
-        .padding(.top, 6)
-    }
-
-    // MARK: - 控制区
-
+    // MARK: - 拍摄操作。配置与已开启状态全部留在设置页。
     private var controls: some View {
-        VStack(spacing: 8) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 7) {
-                    Label(effectiveFilter.rawValue, systemImage: effectiveFilter.icon)
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(.white)
-                        .foregroundStyle(.black)
-                        .clipShape(Capsule())
-
-                    if !autoFilter {
-                        ForEach(PhotoFilter.allCases) { item in
-                            Button(item.rawValue) { self.manualFilter = item }
-                                .font(.caption)
-                                .padding(.horizontal, 9)
-                                .padding(.vertical, 6)
-                                .background(self.manualFilter == item ? Color.white : Color.black.opacity(0.45))
-                                .foregroundStyle(self.manualFilter == item ? Color.black : Color.white)
-                                .clipShape(Capsule())
-                        }
-                    } else {
-                        Text(analyzer.gradeSummary)
-                            .font(.caption2)
-                            .foregroundStyle(.white.opacity(0.65))
-                    }
-                }
-                .padding(.horizontal)
+        VStack(spacing: 12) {
+            if showZoomControl && camera.maximumZoom > camera.minimumZoom {
+                HStack(spacing: 12) {
+                    Text(String(format: "%g×", Double(camera.minimumZoom))).font(.caption2)
+                    Slider(value: Binding(
+                        get: { log(max(Double(camera.minimumZoom), min(Double(camera.maximumZoom), sliderZoom ?? Double(camera.zoom)))) },
+                        set: { value in
+                            let target = exp(value)
+                            sliderZoom = target
+                            lastManualZoom = Date()
+                            camera.setZoom(CGFloat(target))
+                        }),
+                           in: log(Double(camera.minimumZoom))...log(Double(camera.maximumZoom)),
+                           onEditingChanged: { editing in if !editing { sliderZoom = nil } })
+                        .accessibilityLabel("连续变焦")
+                        .accessibilityValue(String(format: "%.1f倍", Double(camera.zoom)))
+                    Text(String(format: "%g×", Double(camera.maximumZoom))).font(.caption2)
+                }.padding(.horizontal, 24)
             }
-
-            HStack(spacing: 18) {
-                ForEach(self.camera.availableZooms, id: \.self) { value in
-                    Button {
-                        self.camera.setZoom(value)
-                    } label: {
-                        Text(String(format: "%.1f×", value))
+            HStack(spacing: 10) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(camera.availableZooms, id: \.self) { value in
+                            Button {
+                                lastManualZoom = Date()
+                                camera.setZoom(value)
+                            } label: {
+                                Text(String(format: "%g×", Double(value)))
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .frame(minWidth: 44, minHeight: 36)
+                                    .background(abs(camera.zoom - value) < 0.08 ? Color.white.opacity(0.2) : .clear)
+                                    .clipShape(Capsule())
+                            }.accessibilityLabel(String(format: "变焦 %g 倍", Double(value)))
+                        }
                     }
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(abs(self.camera.zoom - value) < 0.01 ? Color.yellow : Color.white)
                 }
-
+                Button { showZoomControl.toggle() } label: {
+                    Text(String(format: "%.1f×", Double(camera.zoom)))
+                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                        .frame(minWidth: 56, minHeight: 36)
+                        .background(Color.white.opacity(0.12), in: Capsule())
+                }.accessibilityLabel("展开或收起连续变焦滑杆")
+                    .disabled(camera.maximumZoom <= camera.minimumZoom)
+            }.padding(.horizontal, 24)
+            HStack {
+                Color.clear.frame(width: 48, height: 48)
                 Spacer()
-
-                Button {
-                    // 手动快门 = 立即拍摄，不再经过"智能快门"延迟
-                    self.camera.capture()
-                } label: {
+                Button { takePhoto() } label: {
                     ZStack {
-                        Circle().fill(.white).frame(width: 72, height: 72)
-                        Circle().stroke(.black.opacity(0.22), lineWidth: 4).frame(width: 62, height: 62)
-                        if self.activeRenders > 0 {
-                            ProgressView().tint(.black)
-                        }
+                        Circle().stroke(.white, lineWidth: 3).frame(width: 76, height: 76)
+                        Circle().fill(.white).frame(width: 64, height: 64)
+                        if activeRenders > 0 { ProgressView().tint(.black) }
                     }
-                }
-                .disabled(!camera.isRunning || activeRenders > 0)
-
+                }.accessibilityLabel("拍照")
+                    .disabled(!camera.isRunning || activeRenders > 0)
                 Spacer()
-
-                VStack(alignment: .trailing, spacing: 1) {
-                    Text(String(format: "%.1f×", camera.zoom)).font(.headline)
-                    Text(effectiveFilter.rawValue).font(.caption2)
-                    Text(camera.apertureText).font(.caption2)
-                    Text(camera.depthSupported ? "深度 ✓" : "无深度").font(.caption2)
-                }
-                .frame(width: 92, alignment: .trailing)
-            }
-            .padding(.horizontal, 22)
-            .padding(.bottom, 10)
-
-            HStack(spacing: 6) {
-                toggle("AI取景", $autoComposition)
-                toggle("自动滤镜", $autoFilter)
-                toggle("自动拍", $autoCapture)
-                toggle("存原片", $saveBoth)
-                toggle("高清", $highQuality)
-            }
-            .font(.caption2)
-            .padding(.bottom, 7)
-
-            HStack(spacing: 7) {
-                ForEach(self.styles, id: \.self) { style in
-                    Button(style) { self.compositionStyle = style }
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(self.compositionStyle == style ? Color.white : Color.white.opacity(0.12))
-                        .foregroundStyle(self.compositionStyle == style ? Color.black : Color.white)
-                        .clipShape(Capsule())
-                }
-            }
-            .padding(.bottom, 8)
-        }
-        .padding(.top, 8)
-        .background(.black.opacity(0.5))
-    }
-
-    private func toggle(_ title: String, _ value: Binding<Bool>) -> some View {
-        Button {
-            value.wrappedValue.toggle()
-        } label: {
-            Text((value.wrappedValue ? "✓ " : "") + title)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background(value.wrappedValue ? Color.white.opacity(0.85) : Color.white.opacity(0.12))
-                .foregroundStyle(value.wrappedValue ? Color.black : Color.white)
-                .clipShape(Capsule())
-        }
+                Button { camera.switchCamera() } label: {
+                    Image(systemName: "arrow.triangle.2.circlepath.camera")
+                        .font(.system(size: 24)).frame(width: 48, height: 48)
+                }.accessibilityLabel("切换前后摄像头")
+            }.padding(.horizontal, 36)
+        }.foregroundStyle(.white).padding(.bottom, 12)
     }
 
     // MARK: - 拍照结果处理（全部在后台渲染）
@@ -354,12 +354,8 @@ struct CaptureView: View {
 
         self.activeRenders += 1
 
-        let options = PhotoRenderOptions(
-            filter: effectiveFilter,
-            grade: effectiveGrade,
-            style: compositionStyle,
-            beauty: (effectiveScene == "人物" || effectiveScene == "自拍") ? PortraitBeautySettings() : nil
-        )
+        let options = captureOptions ?? currentRenderOptions()
+        captureOptions = nil
         let exposure = analyzer.qualityExposure
         let composition = analyzer.compositionScore
         let sharpness = analyzer.qualitySharpness
@@ -396,14 +392,19 @@ struct CaptureView: View {
                         options: PhotoRenderOptions,
                         wantsReview: Bool,
                         keepsOriginal: Bool) {
+        let metrics = shotMetrics ?? (analyzer.qualityExposure, analyzer.qualitySharpness, analyzer.compositionScore)
+        UserDefaults.standard.set(metrics.0, forKey: "lastShotExposure")
+        UserDefaults.standard.set(metrics.1, forKey: "lastShotSharpness")
+        UserDefaults.standard.set(metrics.2, forKey: "lastShotComposition")
+        UserDefaults.standard.set(Date().formatted(date: .abbreviated, time: .shortened), forKey: "lastShotDate")
         let isBest = score >= bestScore
         if isBest { self.bestScore = score }
 
         self.library.saveShot(originalData: shot.originalData,
                               styledImage: styled,
-                              keepOriginal: keepsOriginal) { success in
+                              keepOriginal: keepsOriginal, photoID: shot.id) { success in
             if success {
-                self.showToast("已保存到相册")
+                self.showToast("已保存到图库")
             } else {
                 self.showToast("保存失败：\(self.library.lastSaveError ?? "未知错误")")
             }
@@ -430,51 +431,77 @@ struct CaptureView: View {
 
     // MARK: - 自动取景 / 自动拍摄
 
-    private func handleSceneChange(_ scene: String) {
-        guard autoScene, autoComposition, camera.cameraPosition == .back else { return }
-        guard scene != lastAutoScene else { return }
-        lastAutoScene = scene
-        autoLensTask?.cancel()
-        // 防抖 1.2 秒：场景抖动时不要反复重配 session
-        self.autoLensTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 1_200_000_000)
-            guard !Task.isCancelled else { return }
-            let target = CGFloat(self.analyzer.recommendedZoom)
-            if abs(self.camera.zoom - target) > 0.01 {
-                self.camera.setZoom(target)
-            }
-        }
+    private func currentRenderOptions() -> PhotoRenderOptions {
+        PhotoRenderOptions(filter: effectiveFilter, grade: effectiveGrade,
+                           style: compositionStyle, beauty: liveBeauty ? PortraitBeautySettings(skin: min(0.30, max(0, liveBeautyStrength)), clarity: 0, faceDepth: 0, faceSlim: 0, eyeLift: 0, environmentBlend: 0) : nil,
+                           filterStrength: autoDirector && autoFilter ? min(filterStrength, analyzer.directorDecision.maximumFilterStrength) : filterStrength,
+                           directorContext: autoDirector ? analyzer.directorDecision.context : nil,
+                           directorEvidence: autoDirector ? analyzer.directorDecision.evidence : [])
     }
 
-    private func startCountdown() {
-        guard autoCapture, !autoShotPending else { return }
-        autoShotPending = true
-        autoShotTask?.cancel()
-        self.autoShotTask = Task { @MainActor in
-            for value in [3, 2, 1] {
-                self.countdown = value
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                if Task.isCancelled {
-                    self.countdown = 0
-                    self.autoShotPending = false
-                    return
-                }
-            }
-            self.countdown = 0
+    private func takePhoto() {
+        guard !showingSettings, !showReview, camera.isRunning, activeRenders == 0 else { return }
+        shotMetrics = (analyzer.qualityExposure, analyzer.qualitySharpness, analyzer.compositionScore)
+        captureOptions = currentRenderOptions()
+        camera.capture()
+    }
 
-            let held = self.analyzer.autoCaptureHeld
-            let decision = SmartShutterEngine.decide(stability: self.motion.stabilityScore,
-                                                     isStable: self.motion.isStable,
-                                                     exposureScore: self.analyzer.qualityExposure,
-                                                     sharpnessScore: self.analyzer.qualitySharpness)
-            if self.autoCapture && held && decision.action == .shootNow {
-                self.camera.capture()
-                self.showToast("自动拍摄：\(decision.reason)")
-            } else {
-                self.showToast(held ? decision.reason : "构图已变化，本次未自动拍摄")
-            }
-            self.autoShotPending = false
+    private func refreshDirector() {
+        guard isSelected, scenePhase == .active, camera.isRunning, !showingSettings, !showReview else { return }
+        guard autoDirector else {
+            camera.applyExposureCompensation(brightness: analyzer.brightness)
+            return
         }
+        let observation = analyzer.directorObservation
+        var input = DirectorInput(observation: observation, scene: effectiveScene,
+                                  sceneConfidence: autoScene ? analyzer.sceneConfidence : 1,
+                                  zoom: Double(camera.zoom), minimumZoom: Double(camera.minimumZoom),
+                                  maximumZoom: Double(camera.maximumZoom), nativeMaximumZoom: Double(camera.nativeMaximumZoom),
+                                  stable: motion.isStable, framing: directorFraming,
+                                  composition: directorComposition, preference: nil)
+        input.preference = directorLearning ? DirectorPreferenceStore.shared.preference(for: DirectorEngine.context(input)) : nil
+        let manualHold = Date().timeIntervalSince(lastManualZoom) <= 2
+        let allow = autoZoom && autoComposition && !manualHold && activeRenders == 0
+        let decision = directorController.evaluate(input, now: Date.timeIntervalSinceReferenceDate, allowAutomaticZoom: allow)
+        analyzer.directorDecision = decision
+        analyzer.recommendedZoom = decision.targetZoom
+        analyzer.directorTitle = "AI导演 · 摄影知识决策"
+        analyzer.directorInstruction = decision.summary
+        analyzer.framingHint = decision.evidence.first(where: { $0.domain == "构图" })?.action ?? "等待可靠主体"
+        camera.applyExposureCompensation(brightness: observation.brightness, directorBias: Float(decision.exposureBias))
+        if decision.shouldZoom { camera.setZoom(CGFloat(decision.targetZoom)) }
+        // Every new observation revalidates the whole shutter gate. There is no
+        // fixed delay: the first frame where composition, zoom, exposure,
+        // sharpness and motion are simultaneously ready fires immediately.
+        if analyzer.autoCaptureReady { attemptAutoCapture() }
+    }
+
+    private func attemptAutoCapture() {
+        guard !showingSettings, !showReview, isSelected, scenePhase == .active,
+              autoCapture, autoCaptureArmed, analyzer.autoCaptureReady,
+              pinchStartZoom == nil, sliderZoom == nil else { return }
+        let manualHold = Date().timeIntervalSince(lastManualZoom) <= 2
+        let zoomRatio = max(0.01, analyzer.directorDecision.targetZoom) / max(0.01, Double(camera.zoom))
+        let zoomSettled = manualHold || !autoDirector || !autoZoom || abs(log(zoomRatio)) < 0.05
+        guard zoomSettled, !analyzer.directorDecision.shouldZoom, analyzer.autoCaptureHeld else { readySince = nil; return }
+
+        let shutter = SmartShutterEngine.decide(stability: motion.stabilityScore,
+                                                 isStable: motion.isStable,
+                                                 exposureScore: analyzer.qualityExposure,
+                                                 sharpnessScore: analyzer.qualitySharpness)
+        guard shutter.action == .shootNow, motion.isStable,
+              analyzer.subject.rect != .zero else { readySince = nil; return }
+        let box = analyzer.subject.rect
+        if abs(box.midX - readyBox.midX) > 0.04 || abs(box.midY - readyBox.midY) > 0.04 || abs(box.height - readyBox.height) > 0.05 {
+            readySince = nil
+        }
+        if readySince == nil { readySince = Date(); readyBox = box }
+        // Continuous valid observations, not a scheduled shutter or countdown.
+        guard Date().timeIntervalSince(readySince ?? Date()) >= 1.5 else { return }
+        readySince = nil
+
+        autoCaptureArmed = false
+        takePhoto()
     }
 
     private func openAppSettings() {
@@ -484,79 +511,6 @@ struct CaptureView: View {
 }
 
 // MARK: - 子视图
-
-private struct DirectorCard: View {
-    @ObservedObject var analyzer: FrameAnalyzer
-    @ObservedObject var camera: CameraService
-    let countdown: Int
-    let autoCapture: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Image(systemName: analyzer.autoCaptureReady ? "checkmark.seal.fill" : "wand.and.stars")
-                Text(analyzer.directorTitle).font(.headline)
-                Spacer()
-                Text("\(analyzer.compositionScore)").font(.headline.monospacedDigit())
-            }
-            Text(countdown > 0 ? "自动拍摄倒计时：\(countdown)" : analyzer.directorInstruction)
-                .font(.subheadline)
-
-            HStack(spacing: 8) {
-                Label(camera.cameraEngineSummary, systemImage: "cpu")
-                if camera.lowLightBoostActive {
-                    Label("低光增强", systemImage: "moon.stars.fill")
-                }
-                if camera.hardwareHDRActive {
-                    Label("硬件HDR", systemImage: "sun.max.fill")
-                }
-                if autoCapture {
-                    Text(analyzer.autoCaptureReason)
-                        .foregroundStyle(analyzer.autoCaptureReady ? Color.green : Color.white.opacity(0.7))
-                }
-            }
-            .font(.caption2)
-            .foregroundStyle(.white.opacity(0.78))
-
-            HStack(spacing: 12) {
-                Label(analyzer.lightAdvice, systemImage: "sun.max")
-                Spacer()
-                Label(String(format: "建议 %.1f×", analyzer.recommendedZoom), systemImage: "camera.aperture")
-            }
-            .font(.caption)
-            .foregroundStyle(.white.opacity(0.75))
-        }
-        .padding(13)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.black.opacity(0.66))
-        .clipShape(RoundedRectangle(cornerRadius: 18))
-        .padding(.horizontal)
-    }
-}
-
-private struct QualityCard: View {
-    @ObservedObject var analyzer: FrameAnalyzer
-
-    var body: some View {
-        HStack(spacing: 10) {
-            self.quality("曝光", analyzer.qualityExposure)
-            self.quality("构图", analyzer.qualityComposition)
-            self.quality("清晰", analyzer.qualitySharpness)
-            Spacer()
-            Text(analyzer.qualityLevel).font(.caption.weight(.bold))
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(.black.opacity(0.46))
-    }
-
-    private func quality(_ title: String, _ value: Int) -> some View {
-        VStack(spacing: 2) {
-            Text("\(value)").font(.caption.weight(.bold))
-            Text(title).font(.caption2).foregroundStyle(.white.opacity(0.7))
-        }
-    }
-}
 
 private struct PermissionHint: View {
     let title: String

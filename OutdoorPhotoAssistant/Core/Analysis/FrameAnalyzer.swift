@@ -20,6 +20,9 @@ struct SubjectInfo: Equatable {
 /// - 构图评分改成 0–100 的可解释分项，自动拍摄阈值与上限对齐；
 /// - 把时段（日间/黄金时段/蓝调/夜景）真正注入滤镜、调色和建议。
 final class FrameAnalyzer: ObservableObject {
+    @Published var directorObservation = DirectorObservation()
+    @Published var directorDecision = DirectorDecision()
+    @Published var observationTick = 0
     @Published var subject = SubjectInfo()
     @Published var frameAspectRatio: CGFloat = 0.75
     @Published var brightness: Double = 0.5
@@ -56,7 +59,11 @@ final class FrameAnalyzer: ObservableObject {
 
     // 复用 Vision 请求对象，避免每次分析都重建模型
     private let faceRequest = VNDetectFaceRectanglesRequest()
-    private let humanRequest = VNDetectHumanRectanglesRequest()
+    private let humanRequest: VNDetectHumanRectanglesRequest = {
+        let request = VNDetectHumanRectanglesRequest()
+        request.upperBodyOnly = false
+        return request
+    }()
     private let saliencyRequest = VNGenerateAttentionBasedSaliencyImageRequest()
     private let horizonRequest = VNDetectHorizonRequest()
     private let classifyRequest = VNClassifyImageRequest()
@@ -113,36 +120,48 @@ final class FrameAnalyzer: ObservableObject {
         let brightness = Self.measureBrightness(buffer)
         let sharpness = Self.measureSharpness(buffer)
 
-        let orientation: CGImagePropertyOrientation = position == .front ? .upMirrored : .up
+        let orientation: CGImagePropertyOrientation = .up
         let handler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: orientation, options: [:])
         var requests: [VNImageBasedRequest] = [faceRequest, humanRequest, saliencyRequest, horizonRequest]
         if classify { requests.append(classifyRequest) }
-        try? handler.perform(requests)
+        // One unsupported/failed Vision request must not discard faces and people.
+        var succeeded = Set<ObjectIdentifier>()
+        for request in requests {
+            do { try handler.perform([request]); succeeded.insert(ObjectIdentifier(request)) }
+            catch {
+                // A failed request is treated as absent evidence for this frame.
+                continue
+            }
+        }
 
         if classify {
-            lastLabels = classifyRequest.results ?? []
+            lastLabels = succeeded.contains(ObjectIdentifier(classifyRequest)) ? classifyRequest.results ?? [] : []
         }
 
-        let faces = faceRequest.results ?? []
-        let humans = humanRequest.results ?? []
-        let salientObjects = saliencyRequest.results?.first?.salientObjects ?? []
-        let face = faces.max { $0.confidence < $1.confidence }
-        let human = humans.max { $0.confidence < $1.confidence }
-        let salient = salientObjects.max { $0.confidence < $1.confidence }
-
+        // Vision confidence around 0.5 is common for a partially visible person.
+        // Keep the area guards to reject tiny noise, then let temporal dwell stop
+        // one-frame detections from moving the lens.
+        let faces = (succeeded.contains(ObjectIdentifier(faceRequest)) ? faceRequest.results ?? [] : []).filter { $0.confidence >= 0.50 && $0.boundingBox.width * $0.boundingBox.height > 0.002 }
+        let humans = (succeeded.contains(ObjectIdentifier(humanRequest)) ? humanRequest.results ?? [] : []).filter { $0.confidence >= 0.50 && $0.boundingBox.width * $0.boundingBox.height > 0.01 }
+        let salientObjects = succeeded.contains(ObjectIdentifier(saliencyRequest)) ? saliencyRequest.results?.first?.salientObjects ?? [] : []
         var info = SubjectInfo()
+        var kind = "none"
+        let personCount = max(faces.count, humans.count)
         var personConfidence: Double = 0
-        if let face, face.boundingBox.width * face.boundingBox.height >= 0.005 {
-            info = SubjectInfo(type: "人物", rect: face.boundingBox, confidence: face.confidence)
-            personConfidence = Double(face.confidence)
-        } else if let human {
-            info = SubjectInfo(type: "人物", rect: human.boundingBox, confidence: human.confidence)
-            personConfidence = Double(human.confidence) * 0.85
-        } else if let salient {
+        if !humans.isEmpty || !faces.isEmpty {
+            // Preserve every detected person, and prefer body bounds to a head-only crop.
+            let rectangles = humans.map { $0.boundingBox } + faces.map { $0.boundingBox }
+            let union = rectangles.dropFirst().reduce(rectangles[0]) { $0.union($1) }
+            let confidence = (humans.map { $0.confidence } + faces.map { $0.confidence }).max() ?? 0
+            info = SubjectInfo(type: "人物", rect: union, confidence: confidence)
+            personConfidence = Double(confidence)
+            kind = personCount > 1 ? "group" : humans.isEmpty ? "face" : "body"
+        } else if let salient = salientObjects.max(by: { $0.confidence < $1.confidence }) {
             info = SubjectInfo(type: "主体", rect: salient.boundingBox, confidence: salient.confidence)
+            kind = "object"
         }
 
-        let horizon = Double(horizonRequest.results?.first?.angle ?? 0)
+        let horizon = succeeded.contains(ObjectIdentifier(horizonRequest)) ? Double(horizonRequest.results?.first?.angle ?? 0) : 0
         let scene = Self.classifyScene(labels: lastLabels, personConfidence: personConfidence)
 
         // 场景滞回：连续 3 帧同场景才切换，避免 人物/风景 反复跳变
@@ -160,6 +179,9 @@ final class FrameAnalyzer: ObservableObject {
         let period = currentPeriod
         periodLockRef.unlock()
 
+        let directorObservation = Self.directorStatistics(buffer, subject: info, kind: kind,
+                                                         personCount: personCount, brightness: brightness,
+                                                         sharpness: sharpness, horizon: horizon)
         let score = Self.composeScore(subject: info, brightness: brightness, horizon: horizon)
         let filter = PhotoFilter.recommended(scene: effectiveScene, brightness: brightness, period: period)
         let grade = ColorGrade.automatic(scene: effectiveScene,
@@ -209,6 +231,8 @@ final class FrameAnalyzer: ObservableObject {
             self.autoCaptureReady = ready
             self.autoCaptureHeld = held
             self.autoCaptureReason = readyReason
+            self.directorObservation = directorObservation
+            self.observationTick += 1
         }
     }
 
@@ -224,6 +248,7 @@ final class FrameAnalyzer: ObservableObject {
             let handler = VNImageRequestHandler(cgImage: cgImage, orientation: orientation, options: [:])
             let faceRequest = VNDetectFaceRectanglesRequest()
             let humanRequest = VNDetectHumanRectanglesRequest()
+            humanRequest.upperBodyOnly = false
             let horizonRequest = VNDetectHorizonRequest()
             var requests: [VNRequest] = [faceRequest, humanRequest, horizonRequest]
 
@@ -233,7 +258,7 @@ final class FrameAnalyzer: ObservableObject {
                 aestheticsRequest = request
                 requests.append(request)
             }
-            try? handler.perform(requests)
+            let requestsSucceeded = (try? handler.perform(requests)) != nil
 
             let faces = faceRequest.results ?? []
             let humans = humanRequest.results ?? []
@@ -245,7 +270,7 @@ final class FrameAnalyzer: ObservableObject {
             }
 
             let brightness = Self.measureImageBrightness(cgImage)
-            let horizon = Double(horizonRequest.results?.first?.angle ?? 0)
+            let horizon = requestsSucceeded ? Double(horizonRequest.results?.first?.angle ?? 0) : 0
             var aesthetics: Float?
             if #available(iOS 18.0, *),
                let request = aestheticsRequest as? VNCalculateImageAestheticsScoresRequest {
@@ -294,9 +319,8 @@ final class FrameAnalyzer: ObservableObject {
         if subject.rect != .zero {
             let midX = Double(subject.rect.midX)
             let midY = Double(subject.rect.midY)
-            let dx = min(abs(midX - 1.0 / 3.0), abs(midX - 2.0 / 3.0)) / (1.0 / 6.0)
-            let dy = min(abs(midY - 1.0 / 3.0), abs(midY - 2.0 / 3.0)) / (1.0 / 6.0)
-            score += 40 * max(0, 1 - (0.7 * min(dx, 1) + 0.3 * min(dy, 1)))
+            let spatial = DirectorCropImportance.score(x: midX, y: midY, ruleOfThirds: subject.type != "人物")
+            score += 40 * min(1, max(0, spatial / 1.41))
 
             let inset = Double(min(subject.rect.minX,
                                    subject.rect.minY,
@@ -403,6 +427,49 @@ final class FrameAnalyzer: ObservableObject {
     }
 
     // MARK: - 像素统计
+
+    private static func directorStatistics(_ buffer: CVPixelBuffer, subject: SubjectInfo,
+                                           kind: String, personCount: Int, brightness: Double,
+                                           sharpness: Int, horizon: Double) -> DirectorObservation {
+        var result = DirectorObservation()
+        if subject.rect != .zero {
+            let b = subject.rect
+            result.subject = DirectorBox(x: Double(b.minX), y: Double(b.minY), width: Double(b.width), height: Double(b.height))
+        }
+        result.subjectKind = kind
+        result.personCount = personCount
+        result.confidence = Double(subject.confidence)
+        result.brightness = brightness; result.sharpness = sharpness; result.horizon = horizon
+        guard CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_32BGRA else { return result }
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return result }
+        let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer)
+        let strideBytes = CVPixelBufferGetBytesPerRow(buffer)
+        guard width > 0, height > 0, strideBytes >= width * 4 else { return result }
+        let bytes = base.assumingMemoryBound(to: UInt8.self)
+        var n = 0.0, high = 0.0, low = 0.0, sat = 0.0, warm = 0.0
+        var left = 0.0, right = 0.0, leftN = 0.0, rightN = 0.0, subjectY = 0.0, subjectN = 0.0
+        for y in stride(from: 0, to: height, by: max(1, height / 32)) {
+            for x in stride(from: 0, to: width, by: max(1, width / 32)) {
+                let i = y * strideBytes + x * 4
+                let b = Double(bytes[i]) / 255, g = Double(bytes[i + 1]) / 255, r = Double(bytes[i + 2]) / 255
+                let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b
+                let mx = max(r, max(g, b)), mn = min(r, min(g, b))
+                high += luma >= 0.96 ? 1 : 0; low += luma <= 0.08 ? 1 : 0
+                sat += mx > 0 ? (mx - mn) / mx : 0; warm += r - b; n += 1
+                if x < width / 2 { left += luma; leftN += 1 } else { right += luma; rightN += 1 }
+                if subject.rect.contains(CGPoint(x: Double(x) / Double(width), y: 1 - Double(y) / Double(height))) {
+                    subjectY += luma; subjectN += 1
+                }
+            }
+        }
+        result.highlights = high / max(1, n); result.shadows = low / max(1, n)
+        result.saturation = sat / max(1, n); result.warmth = warm / max(1, n)
+        result.leftBrightness = left / max(1, leftN); result.rightBrightness = right / max(1, rightN)
+        result.subjectBrightness = subjectN > 0 ? subjectY / subjectN : brightness
+        return result
+    }
 
     private static func measureBrightness(_ buffer: CVPixelBuffer) -> Double {
         guard CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_32BGRA else { return 0.5 }

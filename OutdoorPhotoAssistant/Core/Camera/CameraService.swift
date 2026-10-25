@@ -4,6 +4,7 @@ import UIKit
 
 /// 一次拍摄产生的数据。原片保留原始字节（EXIF/深度都在里面），另附解码后的图用于后处理。
 struct CapturedPhoto {
+    let id = UUID()
     let originalData: Data
     let image: UIImage
     let depthPortrait: UIImage?
@@ -21,6 +22,7 @@ struct CapturedPhoto {
 /// - 变焦用单一后置虚拟设备 + 仅在 0.5× 时切换超广角物理设备。
 final class CameraService: NSObject, ObservableObject {
     let session = AVCaptureSession()
+    let realtimePreview = RealtimePreviewProcessor()
 
     private let sessionQueue = DispatchQueue(label: "opa.camera.session")
     private let videoQueue = DispatchQueue(label: "opa.camera.video")
@@ -31,12 +33,16 @@ final class CameraService: NSObject, ObservableObject {
     private let engine = AdaptiveCameraEngine()
     private let stateLock = NSLock()
 
+    private var zoomRangeObservations: [NSKeyValueObservation] = []
+    private var requestedDepthDelivery = false
+    private var depthConfigurationPending = false
+    private var zoomObservation: NSKeyValueObservation?
     private var input: AVCaptureDeviceInput?
     private(set) var currentDevice: AVCaptureDevice?
     private var currentPosition: AVCaptureDevice.Position = .back
     private var isConfiguring = false
     private var wantsRunning = false // Access only on sessionQueue.
-    private var requestedHighQuality = false
+    private var requestedHighQuality = true
     private var captureInFlight = 0
     private var pendingUserZoom: CGFloat?
     private var lastBias: Float = 0
@@ -49,13 +55,16 @@ final class CameraService: NSObject, ObservableObject {
     @Published var authorizationDenied = false
     @Published var errorMessage: String?
     @Published var zoom: CGFloat = 1
-    @Published var availableZooms: [CGFloat] = [1, 2]
+    @Published var availableZooms: [CGFloat] = [1]
+    @Published private(set) var nativeMaximumZoom: CGFloat = 1
+    @Published private(set) var minimumZoom: CGFloat = 1
+    @Published private(set) var maximumZoom: CGFloat = 1
     @Published var cameraPosition: AVCaptureDevice.Position = .back
     @Published var exposureText = "EV 0.0"
     @Published var apertureText = "f/1.8"
     @Published var depthSupported = false
     @Published var portraitMatteSupported = false
-    @Published private(set) var highQualityMode = false
+    @Published private(set) var highQualityMode = true
     @Published var cameraEngineSummary = "均衡·画质优先"
     @Published var cameraEngineTier = "均衡"
     @Published var lowLightBoostActive = false
@@ -73,6 +82,9 @@ final class CameraService: NSObject, ObservableObject {
 
     deinit {
         observers.forEach { NotificationCenter.default.removeObserver($0) }
+        zoomRangeObservations.forEach { $0.invalidate() }
+        zoomRangeObservations.removeAll()
+        zoomObservation?.invalidate()
         videoOutput.setSampleBufferDelegate(nil, queue: nil)
     }
 
@@ -214,7 +226,7 @@ final class CameraService: NSObject, ObservableObject {
         if photoOutput.isDepthDataDeliveryEnabled {
             photoOutput.isDepthDataDeliveryEnabled = false
         }
-        let depth = photoOutput.isDepthDataDeliverySupported
+        let depth = requestedDepthDelivery && photoOutput.isDepthDataDeliverySupported
         if depth {
             photoOutput.isDepthDataDeliveryEnabled = true
         }
@@ -247,6 +259,10 @@ final class CameraService: NSObject, ObservableObject {
     // MARK: - 设备与变焦
 
     private func removeCurrentInput() {
+        zoomRangeObservations.forEach { $0.invalidate() }
+        zoomRangeObservations.removeAll()
+        zoomObservation?.invalidate()
+        zoomObservation = nil
         if let input {
             session.removeInput(input)
             self.input = nil
@@ -264,6 +280,7 @@ final class CameraService: NSObject, ObservableObject {
             session.addInput(previousInput)
             input = previousInput
             currentDevice = previousDevice
+            if let previousDevice { observeZoom(previousDevice) }
         }
         return false
     }
@@ -285,7 +302,7 @@ final class CameraService: NSObject, ObservableObject {
     }
 
     private func wantsUltraWide(_ userZoom: CGFloat) -> Bool {
-        userZoom < 0.75
+        userZoom < 1
     }
 
     @discardableResult
@@ -294,10 +311,10 @@ final class CameraService: NSObject, ObservableObject {
         if position == .front {
             device = AVCaptureDevice.default(.builtInTrueDepthCamera, for: .video, position: .front)
                 ?? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front)
-        } else if wantsUltraWide(userZoom), let ultra = ultraWideDevice() {
-            device = ultra
         } else {
-            device = bestBackDevice()
+            let primary = bestBackDevice()
+            let virtualUltra = primary?.constituentDevices.contains { $0.deviceType == .builtInUltraWideCamera } ?? false
+            device = !virtualUltra && userZoom < 1 ? (ultraWideDevice() ?? primary) : primary
         }
 
         guard let device,
@@ -307,11 +324,14 @@ final class CameraService: NSObject, ObservableObject {
         session.addInput(newInput)
         input = newInput
         currentDevice = device
+        observeZoom(device)
         stateLock.lock()
         currentPosition = position
         stateLock.unlock()
 
         engine.configure(device)
+        lastBias = device.exposureTargetBias
+        lastBiasTime = 0
         applyDeviceZoom(device, factor: deviceZoomFactor(device, userZoom: userZoom))
         publishHardwareState(device)
 
@@ -332,12 +352,31 @@ final class CameraService: NSObject, ObservableObject {
 
     private func applyDeviceZoom(_ device: AVCaptureDevice, factor: CGFloat) {
         do {
-            try device.lockForConfiguration()
-            let minZoom = device.minAvailableVideoZoomFactor
-            let maxZoom = max(minZoom, min(device.maxAvailableVideoZoomFactor, 8))
-            device.videoZoomFactor = max(minZoom, min(factor, maxZoom))
-            device.unlockForConfiguration()
+            try NextLevelDeviceControls.zoom(device, factor: factor, animated: session.isRunning)
         } catch {
+            publishError("变焦配置失败：\(error.localizedDescription)")
+        }
+    }
+
+    // Adapted from NextLevel.addCaptureDeviceObservers: publish measured hardware zoom.
+    // Compute the lens normalization once on the session queue; the KVO closure never
+    // reads mutable session/input state from the callback thread.
+    private func observeZoom(_ device: AVCaptureDevice) {
+        zoomRangeObservations.forEach { $0.invalidate() }
+        zoomRangeObservations.removeAll()
+        zoomObservation?.invalidate()
+        let base = deviceZoomFactor(device, userZoom: 1)
+        zoomRangeObservations = [
+            device.observe(\.minAvailableVideoZoomFactor, options: [.new]) { [weak self] _, _ in
+                self?.sessionQueue.async { [weak self] in self?.updateZoomOptions() }
+            },
+            device.observe(\.maxAvailableVideoZoomFactor, options: [.new]) { [weak self] _, _ in
+                self?.sessionQueue.async { [weak self] in self?.updateZoomOptions() }
+            }
+        ]
+        zoomObservation = device.observe(\.videoZoomFactor, options: [.initial, .new]) { [weak self] device, _ in
+            let measured = device.videoZoomFactor / base
+            DispatchQueue.main.async { self?.zoom = measured }
         }
     }
 
@@ -351,8 +390,9 @@ final class CameraService: NSObject, ObservableObject {
     func setZoom(_ userZoom: CGFloat) {
         sessionQueue.async { [weak self] in
             guard let self else { return }
-            let minimum: CGFloat = self.currentPosition == .back && self.ultraWideDevice() != nil ? 0.5 : 1
-            let target = max(minimum, min(userZoom, 4))
+            guard userZoom.isFinite else { return }
+            let bounds = self.zoomBounds()
+            let target = max(bounds.lowerBound, min(userZoom, bounds.upperBound))
             if self.isCaptureInFlight {
                 self.stateLock.lock()
                 self.pendingUserZoom = target
@@ -365,7 +405,8 @@ final class CameraService: NSObject, ObservableObject {
 
     private func applyUserZoom(_ target: CGFloat) {
         guard !isConfiguring else { return }
-        let needsUltra = currentPosition == .back && wantsUltraWide(target)
+        let virtualUltra = currentDevice?.constituentDevices.contains { $0.deviceType == .builtInUltraWideCamera } ?? false
+        let needsUltra = currentPosition == .back && !virtualUltra && wantsUltraWide(target) && ultraWideDevice() != nil
         let deviceIsUltra = currentDevice?.deviceType == .builtInUltraWideCamera
 
         if needsUltra != deviceIsUltra {
@@ -383,18 +424,64 @@ final class CameraService: NSObject, ObservableObject {
         }
 
         updateZoomOptions()
-        DispatchQueue.main.async { self.zoom = target }
+
+    }
+
+    /// All values are displayed relative to the wide-angle camera's 1× field of view.
+    /// Virtual cameras cover the full range without rebuilding the session while pinching.
+    private func zoomBounds() -> ClosedRange<CGFloat> {
+        guard let device = currentDevice else { return 1...1 }
+        let base = deviceZoomFactor(device, userZoom: 1)
+        var minimum = device.minAvailableVideoZoomFactor / base
+        var maximum = min(device.maxAvailableVideoZoomFactor, device.activeFormat.videoMaxZoomFactor) / base
+        if currentPosition == .back {
+            // Fallback for devices without a virtual ultra-wide camera.
+            if device.deviceType == .builtInUltraWideCamera, let wide = bestBackDevice() {
+                let wideBase = deviceZoomFactor(wide, userZoom: 1)
+                maximum = min(wide.maxAvailableVideoZoomFactor, wide.activeFormat.videoMaxZoomFactor) / wideBase
+            } else if !device.isVirtualDevice, ultraWideDevice() != nil { minimum = min(minimum, 0.5) }
+        }
+        minimum = max(0.01, minimum)
+        return minimum...max(minimum, maximum)
     }
 
     private func updateZoomOptions() {
-        var values: [CGFloat] = []
-        if currentPosition == .back, ultraWideDevice() != nil {
-            values.append(0.5)
+        let bounds = zoomBounds()
+        var values: [CGFloat] = [bounds.lowerBound, 1, 2, bounds.upperBound]
+        var nativeMaximum: CGFloat = 1
+        if let device = currentDevice {
+            let base = deviceZoomFactor(device, userZoom: 1)
+            let native = device.virtualDeviceSwitchOverVideoZoomFactors.map { CGFloat($0.doubleValue) / base }
+            values += native
+            nativeMaximum = max(1, native.max() ?? 1)
         }
-        values.append(1)
-        values.append(2)
-        let result = values
-        DispatchQueue.main.async { self.availableZooms = result }
+        let sorted = values.filter { bounds.contains($0) }.sorted()
+        var result: [CGFloat] = []
+        for value in sorted where !result.contains(where: { abs($0 - value) < 0.01 }) { result.append(value) }
+        DispatchQueue.main.async {
+            self.nativeMaximumZoom = nativeMaximum
+            self.minimumZoom = bounds.lowerBound
+            self.maximumZoom = bounds.upperBound
+            self.availableZooms = result
+        }
+    }
+
+    func setDepthDelivery(_ enabled: Bool) {
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            self.requestedDepthDelivery = enabled
+            guard self.currentDevice != nil else { return }
+            if self.isCaptureInFlight { self.depthConfigurationPending = true; return }
+            self.refreshDepthConfiguration()
+        }
+    }
+
+    private func refreshDepthConfiguration() {
+        session.beginConfiguration()
+        configureAdvancedCaptureSupport()
+        session.commitConfiguration()
+        depthConfigurationPending = false
+        updateZoomOptions()
     }
 
     func switchCamera() {
@@ -443,9 +530,14 @@ final class CameraService: NSObject, ObservableObject {
     }
 
     /// 只做曝光补偿：所有机型都支持，且不会抢走系统的连续自动曝光。
-    func applyExposureCompensation(brightness: Double) {
+    func applyExposureCompensation(brightness: Double, directorBias: Float? = nil) {
         sessionQueue.async { [weak self] in
             guard let self, let device = self.currentDevice else { return }
+
+            let seconds = CMTimeGetSeconds(device.exposureDuration)
+            let exposure = seconds > 0 && seconds < 1 ? String(format: "1/%.0fs", 1 / seconds) : String(format: "%.2fs", seconds)
+            let telemetry = String(format: "ISO %.0f · ", device.iso) + exposure
+            DispatchQueue.main.async { self.exposureText = telemetry }
 
             var target: Float
             if brightness < 0.16 {
@@ -459,18 +551,18 @@ final class CameraService: NSObject, ObservableObject {
             } else {
                 target = 0
             }
+            if let directorBias { target = directorBias }
             target = min(device.maxExposureTargetBias, max(device.minExposureTargetBias, target))
 
             let now = CFAbsoluteTimeGetCurrent()
             guard abs(target - self.lastBias) >= 0.15, now - self.lastBiasTime >= 0.6 else { return }
-            self.lastBias = target
-            self.lastBiasTime = now
 
             do {
-                try device.lockForConfiguration()
-                device.setExposureTargetBias(target, completionHandler: nil)
-                device.unlockForConfiguration()
-                DispatchQueue.main.async { self.exposureText = String(format: "EV %+.1f", target) }
+                if try NextLevelDeviceControls.expose(device, targetBias: target) {
+                    self.lastBias = target
+                    self.lastBiasTime = now
+                }
+
             } catch {
             }
         }
@@ -529,6 +621,7 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
         let position = currentPosition
         stateLock.unlock()
         onFrame?(sampleBuffer, position)
+        realtimePreview.consume(sampleBuffer)
     }
 }
 
@@ -547,10 +640,10 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
         if let error {
             publishError("拍照失败：\(error.localizedDescription)")
         }
-        if let pending {
-            sessionQueue.async { [weak self] in
-                self?.applyUserZoom(pending)
-            }
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            if self.depthConfigurationPending { self.refreshDepthConfiguration() }
+            if let pending { self.applyUserZoom(pending) }
         }
     }
 
@@ -593,6 +686,8 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
 
 struct CameraPreview: UIViewRepresentable {
     @ObservedObject var camera: CameraService
+    var options: PhotoRenderOptions
+    var effectsEnabled: Bool
 
     func makeUIView(context: Context) -> PreviewView {
         let service = camera
@@ -606,10 +701,37 @@ struct CameraPreview: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: PreviewView, context: Context) {
+        camera.realtimePreview.configure(options: options, enabled: effectsEnabled) { [weak uiView] cg in
+            uiView?.effectImage.image = cg.map { UIImage(cgImage: $0) }
+            uiView?.effectImage.isHidden = cg == nil
+        }
+        uiView.processor = camera.realtimePreview
+        // 滤镜画面覆盖在取景层上，前摄时两层必须采用相同的镜像方向。
+        uiView.effectImage.transform = camera.cameraPosition == .front
+            ? CGAffineTransform(scaleX: -1, y: 1) : .identity
+        if let connection = uiView.previewLayer.connection, connection.isVideoMirroringSupported {
+            connection.automaticallyAdjustsVideoMirroring = false
+            connection.isVideoMirrored = camera.cameraPosition == .front
+            if connection.isVideoOrientationSupported { connection.videoOrientation = .portrait }
+        }
     }
 }
 
 final class PreviewView: UIView {
+    let effectImage = UIImageView()
+    weak var processor: RealtimePreviewProcessor?
+    deinit { processor?.detach() }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        effectImage.frame = bounds
+    }
+    private func setupEffectImage() {
+        effectImage.contentMode = .scaleAspectFill
+        effectImage.clipsToBounds = true
+        effectImage.isUserInteractionEnabled = false
+        effectImage.isHidden = true
+        addSubview(effectImage)
+    }
     override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
 
     var previewLayer: AVCaptureVideoPreviewLayer {
@@ -621,6 +743,7 @@ final class PreviewView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         isUserInteractionEnabled = true
+        setupEffectImage()
         let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
         addGestureRecognizer(recognizer)
     }
@@ -628,6 +751,7 @@ final class PreviewView: UIView {
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         isUserInteractionEnabled = true
+        setupEffectImage()
         let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
         addGestureRecognizer(recognizer)
     }

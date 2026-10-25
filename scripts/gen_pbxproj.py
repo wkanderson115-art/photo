@@ -15,17 +15,21 @@ OUT = PROJECT_DIR / "project.pbxproj"
 SCHEME = PROJECT_DIR / "xcshareddata" / "xcschemes" / "OutdoorPhotoAssistant.xcscheme"
 
 GROUPS = {
-    "App": ["OutdoorPhotoAssistantApp.swift", "RootView.swift"],
+    "App": ["OutdoorPhotoAssistantApp.swift", "RootView.swift", "AppTheme.swift"],
     "Core/Camera": ["CameraService.swift", "AdaptiveCameraEngine.swift", "DepthPortraitProcessor.swift"],
     "Core/Analysis": [
         "FrameAnalyzer.swift",
+        "DirectorEngine.swift",
         "PhotoFilter.swift",
         "ColorGrade.swift",
         "PortraitBeautyEngine.swift",
         "SmartShutterEngine.swift",
         "PhotoPostProcessor.swift",
     ],
-    "Core/Storage": ["PhotoLibraryService.swift"],
+    "Core/Storage": ["PhotoLibraryService.swift", "AppPhotoStore.swift"],
+    "Core/Cloud": ["CloudAPI.swift", "CloudConfiguration.swift"],
+    "Features/Gallery": ["GalleryView.swift"],
+    "Features/Cloud": ["CloudAPISettingsView.swift"],
     "Core/Location": ["LocationService.swift"],
     "Core/Motion": ["MotionService.swift"],
     "Features/Capture": ["CaptureView.swift", "CompositionOverlay.swift"],
@@ -35,8 +39,8 @@ GROUPS = {
 
 GROUP_HIERARCHY = {
     "": ["App", "Core", "Features"],
-    "Core": ["Core/Camera", "Core/Analysis", "Core/Storage", "Core/Location", "Core/Motion"],
-    "Features": ["Features/Capture", "Features/Review", "Features/Settings"],
+    "Core": ["Core/Camera", "Core/Analysis", "Core/Storage", "Core/Cloud", "Core/Location", "Core/Motion"],
+    "Features": ["Features/Capture", "Features/Review", "Features/Settings", "Features/Gallery", "Features/Cloud"],
 }
 
 BUNDLE_ID = "com.example.outdoorphotoassistant"
@@ -192,11 +196,11 @@ def build() -> tuple[str, dict[str, str]]:
         f"path = OutdoorPhotoAssistant; sourceTree = \"<group>\"; }};"
     )
     for parent, children in GROUP_HIERARCHY.items():
+        if parent == "":
+            continue  # Keep the source group with its plist and assets.
         child_ids = " ".join(f"{group_ids[child]} /* {child.split('/')[-1]} */," for child in children)
         parent_path = parent.split("/")[-1] if parent else ""
-        if parent == "":
-            continue  # The source group above already includes these children and resources.
-        parent_id = group_ids[parent]
+        parent_id = source_group if parent == "" else group_ids[parent]
         add(
             f"\t\t{parent_id} /* {parent_path} */ = {{isa = PBXGroup; children = ("
             f"{child_ids} ); path = {quote(parent_path)}; sourceTree = \"<group>\"; }};"
@@ -302,14 +306,14 @@ def build() -> tuple[str, dict[str, str]]:
         "ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;",
         "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;",
         "CODE_SIGN_STYLE = Automatic;",
-        "CURRENT_PROJECT_VERSION = 1;",
+        "CURRENT_PROJECT_VERSION = 15;",
         "DEVELOPMENT_TEAM = \"\";",
         "ENABLE_PREVIEWS = YES;",
         "GENERATE_INFOPLIST_FILE = NO;",
         "INFOPLIST_FILE = OutdoorPhotoAssistant/Info.plist;",
         "IPHONEOS_DEPLOYMENT_TARGET = 17.6;",
         "LD_RUNPATH_SEARCH_PATHS = (\"$(inherited)\", \"@executable_path/Frameworks\", );",
-        "MARKETING_VERSION = 1.0;",
+        "MARKETING_VERSION = 1.1;",
         f"PRODUCT_BUNDLE_IDENTIFIER = {BUNDLE_ID};",
         "PRODUCT_NAME = \"$(TARGET_NAME)\";",
         "SWIFT_VERSION = 5.0;",

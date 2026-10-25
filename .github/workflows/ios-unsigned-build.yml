@@ -29,12 +29,23 @@ jobs:
       - name: Install verification dependencies
         run: python -m pip install -r scripts/requirements-check.txt
       - name: Verify project and Swift syntax
-        run: python scripts/verify.py
+        run: |
+          python scripts/verify.py
+          python scripts/verify_direct_access.py
       - name: Run shutter decision tests
         run: |
           mkdir -p build
           xcrun swiftc OutdoorPhotoAssistant/Core/Analysis/SmartShutterEngine.swift tests/main.swift -o build/shutter-tests
           build/shutter-tests
+      - name: Run director decision and preference tests
+        run: |
+          mkdir -p build
+          xcrun swiftc OutdoorPhotoAssistant/Core/Analysis/DirectorEngine.swift tests/director/main.swift -o build/director-tests
+          build/director-tests
+      - name: Run cloud API contract tests with mock transport
+        run: |
+          xcrun swiftc -parse-as-library OutdoorPhotoAssistant/Core/Cloud/CloudAPI.swift tests/cloud/main.swift -o build/cloud-tests
+          build/cloud-tests
       - name: Build Debug and Release and package unsigned IPA
         run: bash scripts/build_unsigned_ipa.sh
       - name: Upload unsigned IPA

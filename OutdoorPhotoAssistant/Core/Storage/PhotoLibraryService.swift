@@ -4,142 +4,122 @@ import ImageIO
 import Photos
 import UIKit
 
-/// 相册服务。
-///
-/// 关键改动：
-/// - 原片按"原始字节"写入相册（保留 EXIF / GPS / 深度 / 人像光），而不是把 UIImage 重新编码（上一版会丢掉全部元数据）；
-/// - 成片用 JPEG（质量 0.95）写入；
-/// - 只请求一次读授权，缩略图管理器复用；
-/// - 保存失败会通过 lastSaveError 暴露给 UI，不再静默。
+/// The in-app gallery contains only this app's captures and their local/cloud versions.
+/// It never requires permission to read the user's entire system photo library.
 final class PhotoLibraryService: ObservableObject {
-    @Published var recent: [UIImage] = []
-    @Published var accessDenied = false
+    @Published private(set) var records: [AppPhotoRecord] = []
     @Published var lastSaveError: String?
-
-    private let imageManager = PHCachingImageManager()
+    @Published var lastExportError: String?
+    let store = AppPhotoStore()
     private var didLoad = false
-    private var loadGeneration = UUID()
 
-    func loadIfNeeded() {
-        guard !didLoad else { return }
+    init() { load(recoverInterrupted: true) }
+    func loadIfNeeded() { if !didLoad { load() } }
+    func load(recoverInterrupted: Bool = false) {
         didLoad = true
-        load()
-    }
-
-    func load() {
-        didLoad = true
-        let generation = UUID()
-        loadGeneration = generation
-        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
-        switch status {
-        case .notDetermined:
-            PHPhotoLibrary.requestAuthorization(for: .readWrite) { [weak self] newStatus in
-                DispatchQueue.main.async {
-                    self?.handleLoadAuthorization(newStatus, generation: generation)
-                }
+        Task {
+            do {
+                let items = try await store.records(recoverInterrupted: recoverInterrupted)
+                await MainActor.run { items.forEach { self.publish($0) }; self.lastSaveError = nil }
+            } catch {
+                await MainActor.run { self.lastSaveError = "无法读取本机图库：" + error.localizedDescription }
             }
-        default:
-            handleLoadAuthorization(status, generation: generation)
         }
     }
-
-    private func handleLoadAuthorization(_ status: PHAuthorizationStatus, generation: UUID) {
-        guard generation == loadGeneration else { return }
+    @MainActor private func publish(_ record: AppPhotoRecord) {
+        if let i = records.firstIndex(where: { $0.id == record.id }) {
+            guard records[i].revision <= record.revision else { return }
+            records[i] = record
+        }
+        else { records.append(record) }
+        records.sort { $0.capturedAt > $1.capturedAt }
+    }
+    /// The original is always retained locally; keepOriginal only controls optional system export.
+    func saveShot(originalData: Data, styledImage: UIImage, keepOriginal: Bool = true,
+                  photoID: UUID? = nil, completion: ((Bool) -> Void)? = nil) {
+        let id = photoID ?? UUID()
+        let exports = UserDefaults.standard.bool(forKey: "exportToSystemAlbum")
+        Task {
+            do {
+                let data = try await Task.detached(priority: .utility) {
+                    guard let bytes = styledImage.jpegData(compressionQuality: 0.95) else { throw CloudAPIError.invalidImage }
+                    return bytes
+                }.value
+                let record = try await store.saveCapture(id: id, originalData: originalData, localData: data)
+                await MainActor.run { self.publish(record); self.lastSaveError = nil; completion?(true) }
+                if exports {
+                    do {
+                        try await Self.exportData(keepOriginal ? [originalData, data] : [data])
+                        await MainActor.run { self.lastExportError = nil }
+                    } catch {
+                        await MainActor.run { self.lastExportError = "图库已保存，系统相册导出失败：" + error.localizedDescription }
+                    }
+                }
+            } catch {
+                await MainActor.run { self.lastSaveError = "本机图库保存失败：" + error.localizedDescription; completion?(false) }
+            }
+        }
+    }
+    func saveAdvice(photoID: UUID, value: StoredAdvice) async throws {
+        let record = try await store.addAdvice(photoID: photoID, value: value)
+        await MainActor.run { self.publish(record) }
+    }
+    func saveGenerated(photoID: UUID, sourceAssetID: String, data: Data, prompt: String, model: String, cloudJobID: UUID? = nil) async throws -> PhotoVersion {
+        let record = try await store.addGenerated(photoID: photoID, sourceAssetID: sourceAssetID, data: data, prompt: prompt, model: model, cloudJobID: cloudJobID)
+        await MainActor.run { self.publish(record) }
+        guard let version = cloudJobID.flatMap({ id in record.versions.first(where: { $0.cloudJobID == id }) }) ?? record.versions.last else { throw CloudAPIError.invalidResponse }
+        return version
+    }
+    func beginJob(photoID: UUID, provider: String, sourceAssetID: String, prompt: String? = nil, model: String? = nil) async throws -> UUID {
+        let (record, id) = try await store.beginJob(photoID: photoID, provider: provider, sourceAssetID: sourceAssetID, prompt: prompt, model: model)
+        await MainActor.run { self.publish(record) }
+        return id
+    }
+    func saveJobResult(photoID: UUID, jobID: UUID, url: String, requestID: String?) async throws {
+        let record = try await store.saveJobResult(photoID: photoID, jobID: jobID, url: url, requestID: requestID)
+        await MainActor.run { self.publish(record) }
+    }
+    func resumeDownload(photoID: UUID, jobID: UUID) async throws {
+        let record = try await store.resumeDownload(photoID: photoID, jobID: jobID)
+        await MainActor.run { self.publish(record) }
+    }
+    func finishJob(photoID: UUID, jobID: UUID, state: String, message: String? = nil) async {
+        do {
+            let record = try await store.finishJob(photoID: photoID, jobID: jobID, state: state, message: message)
+            await MainActor.run { self.publish(record) }
+        } catch {
+            await MainActor.run { self.lastSaveError = "任务结果已处理，但任务记录写入失败：" + error.localizedDescription }
+        }
+    }
+    @MainActor func deletePhoto(_ id: UUID) async throws {
+        try await store.deletePhoto(id)
+        records.removeAll { $0.id == id }
+    }
+    func export(photoID: UUID, assetID: String) async throws {
+        let bytes = try await store.preparedExport(photoID: photoID, assetID: assetID)
+        try await Self.exportData([bytes])
+    }
+    private static func exportData(_ images: [Data]) async throws {
+        let status: PHAuthorizationStatus = await withCheckedContinuation { continuation in
+            PHPhotoLibrary.requestAuthorization(for: .addOnly) { continuation.resume(returning: $0) }
+        }
         guard status == .authorized || status == .limited else {
-            DispatchQueue.main.async { self.accessDenied = true }
-            return
+            throw NSError(domain: "PhotoExport", code: 1, userInfo: [NSLocalizedDescriptionKey: "未获得系统相册写入权限；App图库中的照片仍然保留。"])
         }
-
-        let options = PHFetchOptions()
-        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-        options.fetchLimit = 30
-        let assets = PHAsset.fetchAssets(with: .image, options: options)
-
-        let request = PHImageRequestOptions()
-        request.deliveryMode = .fastFormat
-        request.resizeMode = .fast
-        request.isSynchronous = false
-        request.isNetworkAccessAllowed = false
-
-        var collected: [(Int, UIImage)] = []
-        let lock = NSLock()
-        let group = DispatchGroup()
-
-        assets.enumerateObjects { asset, index, _ in
-            group.enter()
-            var completed = false
-            self.imageManager.requestImage(for: asset,
-                                           targetSize: CGSize(width: 320, height: 320),
-                                           contentMode: .aspectFill,
-                                           options: request) { image, _ in
-                lock.lock()
-                guard !completed else { lock.unlock(); return }
-                completed = true
-                if let image { collected.append((index, image)) }
-                lock.unlock()
-                group.leave()
-            }
-        }
-
-        group.notify(queue: .main) { [weak self] in
-            guard let self, generation == self.loadGeneration else { return }
-            self.accessDenied = false
-            self.recent = collected.sorted { $0.0 < $1.0 }.map { $0.1 }
-        }
-    }
-
-    /// 保存一次拍摄：原片字节 + 成片 JPEG。
-    func saveShot(originalData: Data,
-                  styledImage: UIImage,
-                  keepOriginal: Bool = true,
-                  completion: ((Bool) -> Void)? = nil) {
-        guard let styledData = styledImage.jpegData(compressionQuality: 0.95) else {
-            DispatchQueue.main.async { [weak self] in
-                self?.lastSaveError = "照片编码失败，未保存任何照片"
-                completion?(false)
-            }
-            return
-        }
-
-        PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
-            guard status == .authorized || status == .limited else {
-                DispatchQueue.main.async {
-                    self?.lastSaveError = "没有相册写入权限，请到系统设置里允许"
-                    completion?(false)
-                }
-                return
-            }
-
-            let originalType = Self.uniformTypeIdentifier(for: originalData)
-
-            PHPhotoLibrary.shared().performChanges({
-                if keepOriginal {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            PHPhotoLibrary.shared().performChanges {
+                for data in images {
                     let request = PHAssetCreationRequest.forAsset()
                     let options = PHAssetResourceCreationOptions()
-                    options.uniformTypeIdentifier = originalType
-                    request.addResource(with: .photo, data: originalData, options: options)
+                    if let source = CGImageSourceCreateWithData(data as CFData, nil), let type = CGImageSourceGetType(source) {
+                        options.uniformTypeIdentifier = type as String
+                    }
+                    request.addResource(with: .photo, data: data, options: options)
                 }
-                do {
-                    let request = PHAssetCreationRequest.forAsset()
-                    let options = PHAssetResourceCreationOptions()
-                    options.uniformTypeIdentifier = "public.jpeg"
-                    request.addResource(with: .photo, data: styledData, options: options)
-                }
-            }, completionHandler: { success, error in
-                DispatchQueue.main.async {
-                    self?.lastSaveError = error?.localizedDescription
-                    if success, self?.didLoad == true { self?.load() }
-                    completion?(success)
-                }
-            })
+            } completionHandler: { success, error in
+                if success { continuation.resume() }
+                else { continuation.resume(throwing: error ?? CloudAPIError.invalidImage) }
+            }
         }
-    }
-
-    private static func uniformTypeIdentifier(for data: Data) -> String {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let type = CGImageSourceGetType(source) else {
-            return "public.jpeg"
-        }
-        return type as String
     }
 }

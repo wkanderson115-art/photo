@@ -14,6 +14,9 @@ struct PhotoRenderOptions {
     var grade: ColorGrade = ColorGrade()
     var style: String = "自然"
     var beauty: PortraitBeautySettings? = nil
+    var filterStrength: Double = 0.55
+    var directorContext: DirectorLearningContext? = nil
+    var directorEvidence: [DirectorEvidence] = []
 }
 
 /// 统一的后处理入口：原片 → （美颜）→ 滤镜 → 调色 → 一次渲染。
@@ -27,11 +30,18 @@ enum PhotoPostProcessor {
         guard let cg = base.cgImage else { return nil }
 
         var ci = CIImage(cgImage: cg).oriented(exifOrientation(base.imageOrientation))
-        ci = PhotoFilterEngine.apply(options.filter, to: ci)
-        ci = ColorGradeEngine.apply(options.grade.applyingStyle(options.style), to: ci)
-
+        ci = applyColor(to: ci, options: options)
         guard let output = ImagePipeline.context.createCGImage(ci, from: ci.extent) else { return nil }
         return UIImage(cgImage: output, scale: 1, orientation: .up)
+    }
+
+    static func applyColor(to input: CIImage, options: PhotoRenderOptions) -> CIImage {
+        let filtered = PhotoFilterEngine.apply(options.filter, to: input)
+        let graded = ColorGradeEngine.apply(options.grade.applyingStyle(options.style), to: filtered)
+        let mix = CIFilter.dissolveTransition()
+        mix.inputImage = input; mix.targetImage = graded
+        mix.time = Float(max(0, min(1, options.filterStrength)))
+        return (mix.outputImage ?? input).cropped(to: input.extent)
     }
 
     /// 保存用的 JPEG 数据（质量 0.95）。

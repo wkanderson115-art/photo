@@ -50,9 +50,9 @@ enum PhotoFilter: String, CaseIterable, Identifiable {
         if scene == "夜景" || period == "夜景" { return .night }
         if scene == "海边" { return .cool }
         if scene == "花草" { return .forest }
-        if scene == "风景" { return brightness > 0.75 ? .landscape : .film }
-        if scene == "建筑" { return .cinematic }
-        if scene == "汽车" { return .gold }
+        if scene == "风景" { return .landscape }
+        if scene == "建筑" { return .natural }
+        if scene == "汽车" { return .natural }
         return .natural
     }
 }
