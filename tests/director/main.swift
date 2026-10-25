@@ -23,7 +23,9 @@ input.observation.subjectKind = "face"
 input.observation.subject = DirectorBox(x: 0.35, y: 0.35, width: 0.3, height: 0.3)
 expect(DirectorEngine.evaluate(input).targetZoom < 1, "A large face is not mistaken for a small whole body")
 input = fixture(); input.stable = false
-expect(!DirectorEngine.evaluate(input).shouldZoom, "Shake prevents automatic zoom")
+expect(DirectorEngine.evaluate(input).shouldZoom, "Handheld motion alone does not block a zoom recommendation")
+input.observation.horizon = 0.2
+expect(!DirectorEngine.evaluate(input).shouldZoom, "Excessive tilt prevents automatic zoom")
 input = fixture(); input.observation.subject = nil
 expect(!DirectorEngine.evaluate(input).shouldZoom, "No subject means no automatic zoom")
 input = fixture(); input.observation.confidence = 0.2
