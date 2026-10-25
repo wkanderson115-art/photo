@@ -258,7 +258,7 @@ final class FrameAnalyzer: ObservableObject {
                 aestheticsRequest = request
                 requests.append(request)
             }
-            try? handler.perform(requests)
+            let requestsSucceeded = (try? handler.perform(requests)) != nil
 
             let faces = faceRequest.results ?? []
             let humans = humanRequest.results ?? []
@@ -270,7 +270,7 @@ final class FrameAnalyzer: ObservableObject {
             }
 
             let brightness = Self.measureImageBrightness(cgImage)
-            let horizon = succeeded.contains(ObjectIdentifier(horizonRequest)) ? Double(horizonRequest.results?.first?.angle ?? 0) : 0
+            let horizon = requestsSucceeded ? Double(horizonRequest.results?.first?.angle ?? 0) : 0
             var aesthetics: Float?
             if #available(iOS 18.0, *),
                let request = aestheticsRequest as? VNCalculateImageAestheticsScoresRequest {
