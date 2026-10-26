@@ -18,7 +18,7 @@ jobs:
       - name: Select newest installed Xcode
         run: |
           set -euo pipefail
-          XCODE=$(find /Applications -maxdepth 1 -name 'Xcode*.app' | sort -V | tail -n 1)
+          XCODE=$(python3 -c 'import glob, pathlib, re; apps = glob.glob("/Applications/Xcode*.app"); print(max(apps, key=lambda p: tuple(map(int, re.findall(r"[0-9]+", pathlib.Path(p).name))) or (0,)) if apps else "")')
           test -n "$XCODE"
           sudo xcode-select --switch "$XCODE/Contents/Developer"
           xcodebuild -version
