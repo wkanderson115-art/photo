@@ -3,7 +3,7 @@ name: iOS Build (unsigned IPA)
 on:
   workflow_dispatch:
   push:
-    branches: [main, work]
+    branches: [main, work, v18b-cloud-build]
   pull_request:
 
 permissions:
