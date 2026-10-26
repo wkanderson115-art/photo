@@ -15,17 +15,24 @@ OUT = PROJECT_DIR / "project.pbxproj"
 SCHEME = PROJECT_DIR / "xcshareddata" / "xcschemes" / "OutdoorPhotoAssistant.xcscheme"
 
 GROUPS = {
-    "App": ["OutdoorPhotoAssistantApp.swift", "RootView.swift"],
-    "Core/Camera": ["CameraService.swift", "AdaptiveCameraEngine.swift", "DepthPortraitProcessor.swift"],
+    "App": ["OutdoorPhotoAssistantApp.swift", "RootView.swift", "AppTheme.swift"],
+    "Core/Camera": ["AdaptiveCameraEngine.swift", "CameraService.swift", "CaptureHandoff.swift", "DepthPortraitProcessor.swift"],
     "Core/Analysis": [
         "FrameAnalyzer.swift",
+        "DirectorEngine.swift", "DirectorVision.swift",
         "PhotoFilter.swift",
         "ColorGrade.swift",
         "PortraitBeautyEngine.swift",
         "SmartShutterEngine.swift",
         "PhotoPostProcessor.swift",
+        "FrameScoring.swift",
     ],
-    "Core/Storage": ["PhotoLibraryService.swift"],
+    "Core/Storage": ["PhotoLibraryService.swift", "AppPhotoStore.swift"],
+    "Core/Cloud": ["CloudAPI.swift", "CloudConfiguration.swift", "CloudEscalationPolicy.swift", "RetouchPlanMapper.swift"],
+    "Features/Gallery": ["GalleryView.swift"],
+    "Core/CommercialRetouch": ["BlemishLearnedModel.swift", "BlemishModelBridge+Proxy.swift", "BlemishModelBridge.swift", "CommercialQuality.swift", "HybridFusion.swift", "LocalRetouchPreflight.swift", "PresetCatalog.swift", "RetouchAnalyzer.swift", "RetouchBackground.swift", "RetouchBatchRunner.swift", "RetouchDelivery.swift", "RetouchEngine.swift", "RetouchMaskKit.swift", "RetouchParameters.swift", "RetouchPipeline.swift", "RetouchPixelAudit.swift", "RetouchProofing.swift", "RetouchQualityGate.swift", "RetouchRecovery.swift", "RetouchReshape.swift", "RetouchSpecialist.swift", "RetouchStudioModel.swift", "SafeFusion.swift"],
+    "Features/CommercialRetouch": ["CommercialRetouchView.swift", "RetouchStudioView.swift"],
+    "Features/Cloud": ["CloudAPISettingsView.swift"],
     "Core/Location": ["LocationService.swift"],
     "Core/Motion": ["MotionService.swift"],
     "Features/Capture": ["CaptureView.swift", "CompositionOverlay.swift"],
@@ -35,8 +42,8 @@ GROUPS = {
 
 GROUP_HIERARCHY = {
     "": ["App", "Core", "Features"],
-    "Core": ["Core/Camera", "Core/Analysis", "Core/Storage", "Core/Location", "Core/Motion"],
-    "Features": ["Features/Capture", "Features/Review", "Features/Settings"],
+    "Core": ["Core/Camera", "Core/Analysis", "Core/Storage", "Core/Cloud", "Core/Location", "Core/Motion", "Core/CommercialRetouch"],
+    "Features": ["Features/Capture", "Features/Review", "Features/Settings", "Features/Gallery", "Features/Cloud", "Features/CommercialRetouch"],
 }
 
 BUNDLE_ID = "com.example.outdoorphotoassistant"
@@ -192,10 +199,10 @@ def build() -> tuple[str, dict[str, str]]:
         f"path = OutdoorPhotoAssistant; sourceTree = \"<group>\"; }};"
     )
     for parent, children in GROUP_HIERARCHY.items():
+        if not parent:
+            continue  # source_group already defined above; skip to avoid duplicate PBXGroup ID
         child_ids = " ".join(f"{group_ids[child]} /* {child.split('/')[-1]} */," for child in children)
-        parent_path = parent.split("/")[-1] if parent else ""
-        if parent == "":
-            continue  # The source group above already includes these children and resources.
+        parent_path = parent.split("/")[-1]
         parent_id = group_ids[parent]
         add(
             f"\t\t{parent_id} /* {parent_path} */ = {{isa = PBXGroup; children = ("
@@ -302,14 +309,14 @@ def build() -> tuple[str, dict[str, str]]:
         "ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;",
         "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;",
         "CODE_SIGN_STYLE = Automatic;",
-        "CURRENT_PROJECT_VERSION = 1;",
+        "CURRENT_PROJECT_VERSION = 27;",
         "DEVELOPMENT_TEAM = \"\";",
         "ENABLE_PREVIEWS = YES;",
         "GENERATE_INFOPLIST_FILE = NO;",
         "INFOPLIST_FILE = OutdoorPhotoAssistant/Info.plist;",
         "IPHONEOS_DEPLOYMENT_TARGET = 17.6;",
         "LD_RUNPATH_SEARCH_PATHS = (\"$(inherited)\", \"@executable_path/Frameworks\", );",
-        "MARKETING_VERSION = 1.0;",
+        "MARKETING_VERSION = 1.1;",
         f"PRODUCT_BUNDLE_IDENTIFIER = {BUNDLE_ID};",
         "PRODUCT_NAME = \"$(TARGET_NAME)\";",
         "SWIFT_VERSION = 5.0;",

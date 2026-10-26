@@ -101,7 +101,7 @@ final class AdaptiveCameraEngine {
             settings.isAutoContentAwareDistortionCorrectionEnabled = true
         }
 
-        if highQuality && profile.allowMaxDimensions {
+        if highQuality {
             settings.maxPhotoDimensions = output.maxPhotoDimensions
         }
 
@@ -115,5 +115,66 @@ final class AdaptiveCameraEngine {
                 settings.embedsPortraitEffectsMatteInPhoto = true
             }
         }
+    }
+}
+
+// Portions adapted from NextLevel/NextLevel, Sources/NextLevel.swift.
+// Copyright (c) 2016-present patrick piemonte, NextLevel.
+// MIT license: ThirdParty/NextLevel/LICENSE (included in the source distribution).
+// Upstream blob: fbf90185f15c26709d76e6c53816b68fd622b86e
+// Adaptations: explicit device injection, success/error propagation, defer unlock,
+// dynamic zoom limits and an optional ramp. Caller owns session queue serialization.
+enum NextLevelDeviceControls {
+    static let licenseText = """
+The MIT License (MIT)
+
+Copyright (c) 2016-present patrick piemonte (http://patrickpiemonte.com), NextLevel (http://nextlevel.engineering/)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+"""
+
+    /// Derived from NextLevel.expose(withTargetBias:force:completionHandler:).
+    @discardableResult
+    static func expose(_ device: AVCaptureDevice, targetBias: Float, force: Bool = false) throws -> Bool {
+        guard !device.isAdjustingExposure || force else { return false }
+        let newTargetBias = max(device.minExposureTargetBias, min(targetBias, device.maxExposureTargetBias))
+        try device.lockForConfiguration()
+        defer { device.unlockForConfiguration() }
+        device.setExposureTargetBias(newTargetBias, completionHandler: nil)
+        return true
+    }
+
+    /// Derived from NextLevel.videoZoomFactor's setter.
+    @discardableResult
+    static func zoom(_ device: AVCaptureDevice, factor: CGFloat, animated: Bool) throws -> CGFloat {
+        try device.lockForConfiguration()
+        defer { device.unlockForConfiguration() }
+        let minimum = device.minAvailableVideoZoomFactor
+        let maximum = max(minimum, min(device.maxAvailableVideoZoomFactor,
+                                         device.activeFormat.videoMaxZoomFactor))
+        let target = max(minimum, min(factor, maximum))
+        if device.isRampingVideoZoom { device.cancelVideoZoomRamp() }
+        if animated {
+            device.ramp(toVideoZoomFactor: target, withRate: Float(max(3, abs(target - device.videoZoomFactor) * 4)))
+        } else {
+            device.videoZoomFactor = target
+        }
+        return target
     }
 }

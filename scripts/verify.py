@@ -96,7 +96,7 @@ source_paths = sorted(str(refs_by_id[rid].path) for rid in source_ref_ids)
 # file refs are relative to their group; group paths are the parent dirs. Compare basenames + count.
 source_basenames = sorted(pathlib.PurePosixPath(p).name for p in source_paths)
 disk_basenames = sorted(pathlib.PurePosixPath(p).name for p in disk_swift)
-check(len(disk_swift) == 18, f"18 Swift files on disk (got {len(disk_swift)})")
+check(len(disk_swift) >= 27, f"at least 27 Swift files on disk (got {len(disk_swift)})")
 check(source_basenames == disk_basenames, "Sources phase matches Swift files on disk")
 
 print("== 3. resources ==")

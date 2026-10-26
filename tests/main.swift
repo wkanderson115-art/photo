@@ -19,3 +19,6 @@ for exposure in stride(from: -100, through: 200, by: 10) {
     }
 }
 print("All shutter decision tests passed")
+
+let unstableHighScore = SmartShutterEngine.decide(stability: 90, isStable: false, exposureScore: 100, sharpnessScore: 100)
+expect(unstableHighScore.action == .wait, "Unstable motion waits even at high stability score")

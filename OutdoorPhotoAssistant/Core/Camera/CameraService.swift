@@ -4,6 +4,7 @@ import UIKit
 
 /// 一次拍摄产生的数据。原片保留原始字节（EXIF/深度都在里面），另附解码后的图用于后处理。
 struct CapturedPhoto {
+    let id = UUID()
     let originalData: Data
     let image: UIImage
     let depthPortrait: UIImage?
@@ -21,6 +22,7 @@ struct CapturedPhoto {
 /// - 变焦用单一后置虚拟设备 + 仅在 0.5× 时切换超广角物理设备。
 final class CameraService: NSObject, ObservableObject {
     let session = AVCaptureSession()
+    let realtimePreview = RealtimePreviewProcessor()
 
     private let sessionQueue = DispatchQueue(label: "opa.camera.session")
     private let videoQueue = DispatchQueue(label: "opa.camera.video")
@@ -31,12 +33,18 @@ final class CameraService: NSObject, ObservableObject {
     private let engine = AdaptiveCameraEngine()
     private let stateLock = NSLock()
 
+    private var zoomRangeObservations: [NSKeyValueObservation] = []
+    private var requestedDepthDelivery = false
+    private var depthConfigurationPending = false
+    private var zoomObservation: NSKeyValueObservation?
     private var input: AVCaptureDeviceInput?
     private(set) var currentDevice: AVCaptureDevice?
     private var currentPosition: AVCaptureDevice.Position = .back
     private var isConfiguring = false
     private var wantsRunning = false // Access only on sessionQueue.
-    private var requestedHighQuality = false
+    private var requestedHighQuality = true
+    private var directorOwnsExposure = false
+    private var lastMotionExposureUpdate = Date.distantPast
     private var captureInFlight = 0
     private var pendingUserZoom: CGFloat?
     private var lastBias: Float = 0
@@ -49,13 +57,28 @@ final class CameraService: NSObject, ObservableObject {
     @Published var authorizationDenied = false
     @Published var errorMessage: String?
     @Published var zoom: CGFloat = 1
-    @Published var availableZooms: [CGFloat] = [1, 2]
+    @Published var requestedFlash = false
+    @Published private(set) var flashAvailable = false
+    @Published private(set) var previewThumbnail: UIImage?
+    private var lastThumbnailTime = 0.0
+    private let thumbnailQueue = DispatchQueue(label: "opa.preview.thumbnail", qos: .utility)
+    private var thumbnailBusy = false
+    @Published private(set) var manualExposure = false
+    @Published private(set) var focusExposureLocked = false
+    private var userBias: Float = 0
+    @Published var availableZooms: [CGFloat] = [1]
+    @Published private(set) var nativeMaximumZoom: CGFloat = 1
+    @Published private(set) var minimumZoom: CGFloat = 1
+    @Published private(set) var maximumZoom: CGFloat = 1
     @Published var cameraPosition: AVCaptureDevice.Position = .back
     @Published var exposureText = "EV 0.0"
+    @Published private(set) var exposureSeconds = 1.0
+    @Published private(set) var controlsSettled = false
+    @Published private(set) var controlsUpdatedAt = Date.distantPast
     @Published var apertureText = "f/1.8"
     @Published var depthSupported = false
     @Published var portraitMatteSupported = false
-    @Published private(set) var highQualityMode = false
+    @Published private(set) var highQualityMode = true
     @Published var cameraEngineSummary = "均衡·画质优先"
     @Published var cameraEngineTier = "均衡"
     @Published var lowLightBoostActive = false
@@ -73,6 +96,9 @@ final class CameraService: NSObject, ObservableObject {
 
     deinit {
         observers.forEach { NotificationCenter.default.removeObserver($0) }
+        zoomRangeObservations.forEach { $0.invalidate() }
+        zoomRangeObservations.removeAll()
+        zoomObservation?.invalidate()
         videoOutput.setSampleBufferDelegate(nil, queue: nil)
     }
 
@@ -214,7 +240,7 @@ final class CameraService: NSObject, ObservableObject {
         if photoOutput.isDepthDataDeliveryEnabled {
             photoOutput.isDepthDataDeliveryEnabled = false
         }
-        let depth = photoOutput.isDepthDataDeliverySupported
+        let depth = requestedDepthDelivery && photoOutput.isDepthDataDeliverySupported
         if depth {
             photoOutput.isDepthDataDeliveryEnabled = true
         }
@@ -247,6 +273,10 @@ final class CameraService: NSObject, ObservableObject {
     // MARK: - 设备与变焦
 
     private func removeCurrentInput() {
+        zoomRangeObservations.forEach { $0.invalidate() }
+        zoomRangeObservations.removeAll()
+        zoomObservation?.invalidate()
+        zoomObservation = nil
         if let input {
             session.removeInput(input)
             self.input = nil
@@ -264,6 +294,7 @@ final class CameraService: NSObject, ObservableObject {
             session.addInput(previousInput)
             input = previousInput
             currentDevice = previousDevice
+            if let previousDevice { observeZoom(previousDevice) }
         }
         return false
     }
@@ -285,7 +316,7 @@ final class CameraService: NSObject, ObservableObject {
     }
 
     private func wantsUltraWide(_ userZoom: CGFloat) -> Bool {
-        userZoom < 0.75
+        userZoom < 1
     }
 
     @discardableResult
@@ -294,10 +325,10 @@ final class CameraService: NSObject, ObservableObject {
         if position == .front {
             device = AVCaptureDevice.default(.builtInTrueDepthCamera, for: .video, position: .front)
                 ?? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front)
-        } else if wantsUltraWide(userZoom), let ultra = ultraWideDevice() {
-            device = ultra
         } else {
-            device = bestBackDevice()
+            let primary = bestBackDevice()
+            let virtualUltra = primary?.constituentDevices.contains { $0.deviceType == .builtInUltraWideCamera } ?? false
+            device = !virtualUltra && userZoom < 1 ? (ultraWideDevice() ?? primary) : primary
         }
 
         guard let device,
@@ -307,11 +338,14 @@ final class CameraService: NSObject, ObservableObject {
         session.addInput(newInput)
         input = newInput
         currentDevice = device
+        observeZoom(device)
         stateLock.lock()
         currentPosition = position
         stateLock.unlock()
 
         engine.configure(device)
+        lastBias = device.exposureTargetBias
+        lastBiasTime = 0
         applyDeviceZoom(device, factor: deviceZoomFactor(device, userZoom: userZoom))
         publishHardwareState(device)
 
@@ -332,12 +366,31 @@ final class CameraService: NSObject, ObservableObject {
 
     private func applyDeviceZoom(_ device: AVCaptureDevice, factor: CGFloat) {
         do {
-            try device.lockForConfiguration()
-            let minZoom = device.minAvailableVideoZoomFactor
-            let maxZoom = max(minZoom, min(device.maxAvailableVideoZoomFactor, 8))
-            device.videoZoomFactor = max(minZoom, min(factor, maxZoom))
-            device.unlockForConfiguration()
+            try NextLevelDeviceControls.zoom(device, factor: factor, animated: session.isRunning)
         } catch {
+            publishError("变焦配置失败：\(error.localizedDescription)")
+        }
+    }
+
+    // Adapted from NextLevel.addCaptureDeviceObservers: publish measured hardware zoom.
+    // Compute the lens normalization once on the session queue; the KVO closure never
+    // reads mutable session/input state from the callback thread.
+    private func observeZoom(_ device: AVCaptureDevice) {
+        zoomRangeObservations.forEach { $0.invalidate() }
+        zoomRangeObservations.removeAll()
+        zoomObservation?.invalidate()
+        let base = deviceZoomFactor(device, userZoom: 1)
+        zoomRangeObservations = [
+            device.observe(\.minAvailableVideoZoomFactor, options: [.new]) { [weak self] _, _ in
+                self?.sessionQueue.async { [weak self] in self?.updateZoomOptions() }
+            },
+            device.observe(\.maxAvailableVideoZoomFactor, options: [.new]) { [weak self] _, _ in
+                self?.sessionQueue.async { [weak self] in self?.updateZoomOptions() }
+            }
+        ]
+        zoomObservation = device.observe(\.videoZoomFactor, options: [.initial, .new]) { [weak self] device, _ in
+            let measured = device.videoZoomFactor / base
+            DispatchQueue.main.async { self?.zoom = measured }
         }
     }
 
@@ -351,8 +404,9 @@ final class CameraService: NSObject, ObservableObject {
     func setZoom(_ userZoom: CGFloat) {
         sessionQueue.async { [weak self] in
             guard let self else { return }
-            let minimum: CGFloat = self.currentPosition == .back && self.ultraWideDevice() != nil ? 0.5 : 1
-            let target = max(minimum, min(userZoom, 4))
+            guard userZoom.isFinite else { return }
+            let bounds = self.zoomBounds()
+            let target = max(bounds.lowerBound, min(userZoom, bounds.upperBound))
             if self.isCaptureInFlight {
                 self.stateLock.lock()
                 self.pendingUserZoom = target
@@ -365,7 +419,8 @@ final class CameraService: NSObject, ObservableObject {
 
     private func applyUserZoom(_ target: CGFloat) {
         guard !isConfiguring else { return }
-        let needsUltra = currentPosition == .back && wantsUltraWide(target)
+        let virtualUltra = currentDevice?.constituentDevices.contains { $0.deviceType == .builtInUltraWideCamera } ?? false
+        let needsUltra = currentPosition == .back && !virtualUltra && wantsUltraWide(target) && ultraWideDevice() != nil
         let deviceIsUltra = currentDevice?.deviceType == .builtInUltraWideCamera
 
         if needsUltra != deviceIsUltra {
@@ -383,18 +438,64 @@ final class CameraService: NSObject, ObservableObject {
         }
 
         updateZoomOptions()
-        DispatchQueue.main.async { self.zoom = target }
+
+    }
+
+    /// All values are displayed relative to the wide-angle camera's 1× field of view.
+    /// Virtual cameras cover the full range without rebuilding the session while pinching.
+    private func zoomBounds() -> ClosedRange<CGFloat> {
+        guard let device = currentDevice else { return 1...1 }
+        let base = deviceZoomFactor(device, userZoom: 1)
+        var minimum = device.minAvailableVideoZoomFactor / base
+        var maximum = min(device.maxAvailableVideoZoomFactor, device.activeFormat.videoMaxZoomFactor) / base
+        if currentPosition == .back {
+            // Fallback for devices without a virtual ultra-wide camera.
+            if device.deviceType == .builtInUltraWideCamera, let wide = bestBackDevice() {
+                let wideBase = deviceZoomFactor(wide, userZoom: 1)
+                maximum = min(wide.maxAvailableVideoZoomFactor, wide.activeFormat.videoMaxZoomFactor) / wideBase
+            } else if !device.isVirtualDevice, ultraWideDevice() != nil { minimum = min(minimum, 0.5) }
+        }
+        minimum = max(0.01, minimum)
+        return minimum...max(minimum, maximum)
     }
 
     private func updateZoomOptions() {
-        var values: [CGFloat] = []
-        if currentPosition == .back, ultraWideDevice() != nil {
-            values.append(0.5)
+        let bounds = zoomBounds()
+        var values: [CGFloat] = [bounds.lowerBound, 1, 2, bounds.upperBound]
+        var nativeMaximum: CGFloat = 1
+        if let device = currentDevice {
+            let base = deviceZoomFactor(device, userZoom: 1)
+            let native = device.virtualDeviceSwitchOverVideoZoomFactors.map { CGFloat($0.doubleValue) / base }
+            values += native
+            nativeMaximum = max(1, native.max() ?? 1)
         }
-        values.append(1)
-        values.append(2)
-        let result = values
-        DispatchQueue.main.async { self.availableZooms = result }
+        let sorted = values.filter { bounds.contains($0) }.sorted()
+        var result: [CGFloat] = []
+        for value in sorted where !result.contains(where: { abs($0 - value) < 0.01 }) { result.append(value) }
+        DispatchQueue.main.async {
+            self.nativeMaximumZoom = nativeMaximum
+            self.minimumZoom = bounds.lowerBound
+            self.maximumZoom = bounds.upperBound
+            self.availableZooms = result
+        }
+    }
+
+    func setDepthDelivery(_ enabled: Bool) {
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            self.requestedDepthDelivery = enabled
+            guard self.currentDevice != nil else { return }
+            if self.isCaptureInFlight { self.depthConfigurationPending = true; return }
+            self.refreshDepthConfiguration()
+        }
+    }
+
+    private func refreshDepthConfiguration() {
+        session.beginConfiguration()
+        configureAdvancedCaptureSupport()
+        session.commitConfiguration()
+        depthConfigurationPending = false
+        updateZoomOptions()
     }
 
     func switchCamera() {
@@ -430,7 +531,7 @@ final class CameraService: NSObject, ObservableObject {
                         device.focusMode = .continuousAutoFocus
                     }
                 }
-                if device.isExposurePointOfInterestSupported {
+                if device.isExposurePointOfInterestSupported && !self.directorOwnsExposure {
                     device.exposurePointOfInterest = normalizedPoint
                     if device.isExposureModeSupported(.continuousAutoExposure) {
                         device.exposureMode = .continuousAutoExposure
@@ -442,11 +543,81 @@ final class CameraService: NSObject, ObservableObject {
         }
     }
 
+    func setUserExposure(_ bias: Float?) {
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            self.userBias = bias ?? 0
+            DispatchQueue.main.async { self.manualExposure = bias != nil }
+            guard let device = self.currentDevice else { return }
+            do {
+                try device.lockForConfiguration(); defer { device.unlockForConfiguration() }
+                device.setExposureTargetBias(max(device.minExposureTargetBias, min(device.maxExposureTargetBias, self.userBias)), completionHandler: nil)
+            } catch { }
+        }
+    }
+    func setFocusExposureLock(_ locked: Bool) {
+        sessionQueue.async { [weak self] in
+            guard let self, let device = self.currentDevice else { return }
+            do {
+                try device.lockForConfiguration(); defer { device.unlockForConfiguration() }
+                let focus: AVCaptureDevice.FocusMode = locked ? .locked : .continuousAutoFocus
+                let exposure: AVCaptureDevice.ExposureMode = locked ? .locked : .continuousAutoExposure
+                if device.isFocusModeSupported(focus) { device.focusMode = focus }
+                if !self.directorOwnsExposure && device.isExposureModeSupported(exposure) { device.exposureMode = exposure }
+                DispatchQueue.main.async { self.focusExposureLocked = locked }
+            } catch { }
+        }
+    }
+
+    /// Motion intent uses supported custom exposure only. Other intents restore AE.
+    func applyMotionExposure(enabled: Bool) {
+        sessionQueue.async { [weak self] in
+            guard let self, let device = self.currentDevice, !self.isCaptureInFlight else { return }
+            do {
+                try device.lockForConfiguration()
+                defer { device.unlockForConfiguration() }
+                if !enabled {
+                    if self.directorOwnsExposure && device.isExposureModeSupported(.continuousAutoExposure) {
+                        device.exposureMode = .continuousAutoExposure
+                    }
+                    self.directorOwnsExposure = false
+                    return
+                }
+                guard device.isExposureModeSupported(.custom), Date().timeIntervalSince(self.lastMotionExposureUpdate) > 1 else { return }
+                let format = device.activeFormat
+                let minimum = CMTimeGetSeconds(format.minExposureDuration)
+                let maximum = CMTimeGetSeconds(format.maxExposureDuration)
+                guard minimum.isFinite, maximum.isFinite, minimum > 0, maximum >= minimum else { return }
+                let duration = max(minimum, min(maximum, 1.0 / 500))
+                let old = CMTimeGetSeconds(device.exposureDuration)
+                guard old.isFinite, old > 0 else { return }
+                let correction = pow(2.0, -Double(device.exposureTargetOffset))
+                let targetISO = Double(device.iso) * old / duration * max(0.5, min(2, correction))
+                let iso = max(format.minISO, min(format.maxISO, Float(targetISO)))
+                device.setExposureModeCustom(duration: CMTime(seconds: duration, preferredTimescale: 1_000_000_000), iso: iso, completionHandler: nil)
+                self.directorOwnsExposure = true
+                self.lastMotionExposureUpdate = Date()
+            } catch { /* Retain normal exposure; do not claim a command succeeded. */ }
+        }
+    }
+
     /// 只做曝光补偿：所有机型都支持，且不会抢走系统的连续自动曝光。
-    func applyExposureCompensation(brightness: Double) {
+    func applyExposureCompensation(brightness: Double, directorBias: Float? = nil) {
         sessionQueue.async { [weak self] in
             guard let self, let device = self.currentDevice else { return }
 
+            let seconds = CMTimeGetSeconds(device.exposureDuration)
+            let exposure = seconds > 0 && seconds < 1 ? String(format: "1/%.0fs", 1 / seconds) : String(format: "%.2fs", seconds)
+            let telemetry = String(format: "ISO %.0f · ", device.iso) + exposure
+            let settled = !device.isAdjustingFocus && !device.isAdjustingExposure && !device.isRampingVideoZoom
+            DispatchQueue.main.async {
+                self.exposureSeconds = seconds
+                self.exposureText = telemetry
+                self.controlsSettled = settled
+                self.controlsUpdatedAt = Date()
+            }
+
+            guard !self.manualExposure, !self.focusExposureLocked else { return }
             var target: Float
             if brightness < 0.16 {
                 target = 0.4
@@ -459,18 +630,18 @@ final class CameraService: NSObject, ObservableObject {
             } else {
                 target = 0
             }
+            if let directorBias, abs(directorBias) > 0.01 { target += directorBias }
             target = min(device.maxExposureTargetBias, max(device.minExposureTargetBias, target))
 
             let now = CFAbsoluteTimeGetCurrent()
             guard abs(target - self.lastBias) >= 0.15, now - self.lastBiasTime >= 0.6 else { return }
-            self.lastBias = target
-            self.lastBiasTime = now
 
             do {
-                try device.lockForConfiguration()
-                device.setExposureTargetBias(target, completionHandler: nil)
-                device.unlockForConfiguration()
-                DispatchQueue.main.async { self.exposureText = String(format: "EV %+.1f", target) }
+                if try NextLevelDeviceControls.expose(device, targetBias: target) {
+                    self.lastBias = target
+                    self.lastBiasTime = now
+                }
+
             } catch {
             }
         }
@@ -484,14 +655,16 @@ final class CameraService: NSObject, ObservableObject {
     }
 
     func capture() {
+        let flashRequested = requestedFlash
         sessionQueue.async { [weak self] in
             guard let self else { return }
             guard self.session.isRunning, !self.isConfiguring, !self.isCaptureInFlight else { return }
 
             let settings = AVCapturePhotoSettings()
-            settings.flashMode = .off
+            settings.flashMode = flashRequested && self.photoOutput.supportedFlashModes.contains(.on) ? .on : .off
 
             self.engine.prepare(settings, output: self.photoOutput, highQuality: self.requestedHighQuality)
+            if self.directorOwnsExposure { settings.photoQualityPrioritization = .speed }
             self.configureConnections()
 
             self.stateLock.lock()
@@ -508,9 +681,11 @@ final class CameraService: NSObject, ObservableObject {
 
     private func publishHardwareState(_ device: AVCaptureDevice) {
         let profile = engine.profile
+        let supportsFlash = photoOutput.supportedFlashModes.contains(.on)
         let hdr = device.activeFormat.isVideoHDRSupported && device.isVideoHDREnabled
         let lowLight = device.isLowLightBoostEnabled
         DispatchQueue.main.async {
+            self.flashAvailable = supportsFlash
             self.cameraEngineSummary = profile.summary
             self.cameraEngineTier = profile.tier.rawValue
             self.lowLightBoostActive = lowLight
@@ -528,7 +703,23 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
         stateLock.lock()
         let position = currentPosition
         stateLock.unlock()
+        let time = ProcessInfo.processInfo.systemUptime
+        if time - lastThumbnailTime > 1.5, !thumbnailBusy, let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
+            lastThumbnailTime = time; thumbnailBusy = true
+            thumbnailQueue.async { [weak self] in
+                guard let self else { return }
+                let image: UIImage? = autoreleasepool {
+                    let input = CIImage(cvPixelBuffer: buffer)
+                    let scale = 240 / max(input.extent.width, input.extent.height)
+                    let small = input.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+                    return ImagePipeline.context.createCGImage(small, from: small.extent).map { UIImage(cgImage: $0) }
+                }
+                DispatchQueue.main.async { self.previewThumbnail = image }
+                self.videoQueue.async { self.thumbnailBusy = false }
+            }
+        }
         onFrame?(sampleBuffer, position)
+        realtimePreview.consume(sampleBuffer)
     }
 }
 
@@ -547,10 +738,10 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
         if let error {
             publishError("拍照失败：\(error.localizedDescription)")
         }
-        if let pending {
-            sessionQueue.async { [weak self] in
-                self?.applyUserZoom(pending)
-            }
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            if self.depthConfigurationPending { self.refreshDepthConfiguration() }
+            if let pending { self.applyUserZoom(pending) }
         }
     }
 
@@ -593,6 +784,11 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
 
 struct CameraPreview: UIViewRepresentable {
     @ObservedObject var camera: CameraService
+    var options: PhotoRenderOptions
+    var effectsEnabled: Bool
+    var autoFocusPoint: CGPoint? = nil
+    var focusObservationTick: Int = 0
+    var onSubjectTap: ((CGPoint, Bool) -> Void)? = nil
 
     func makeUIView(context: Context) -> PreviewView {
         let service = camera
@@ -606,36 +802,111 @@ struct CameraPreview: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: PreviewView, context: Context) {
+        camera.realtimePreview.configure(options: options, enabled: effectsEnabled) { [weak uiView] cg in
+            uiView?.effectImage.image = cg.map { UIImage(cgImage: $0) }
+            uiView?.effectImage.isHidden = cg == nil
+        }
+        uiView.onSubjectTap = onSubjectTap
+        uiView.processor = camera.realtimePreview
+        if !camera.focusExposureLocked, let point = autoFocusPoint, uiView.lastFocusTick != focusObservationTick,
+           Date().timeIntervalSince(uiView.lastFocusAt) > 1.2,
+           Date().timeIntervalSince(uiView.lastTapAt) > 5, uiView.bounds.width > 0,
+           uiView.lastFocusPoint.map({ hypot($0.x - point.x, $0.y - point.y) > 0.06 }) ?? true {
+            uiView.lastFocusTick = focusObservationTick
+            uiView.lastFocusAt = Date()
+            uiView.lastFocusPoint = point
+            let imageSize = uiView.effectImage.image?.size ?? CGSize(width: 3, height: 4)
+            let scale = max(uiView.bounds.width / imageSize.width, uiView.bounds.height / imageSize.height)
+            let layerPoint = CGPoint(x: (point.x - 0.5) * imageSize.width * scale + uiView.bounds.midX,
+                                     y: (0.5 - point.y) * imageSize.height * scale + uiView.bounds.midY)
+            let converted = uiView.previewLayer.captureDevicePointConverted(fromLayerPoint: layerPoint)
+            if (0...1).contains(converted.x), (0...1).contains(converted.y) {
+                camera.setFocusAndExposure(normalizedPoint: converted)
+            }
+        }
+        if let connection = uiView.previewLayer.connection, connection.isVideoMirroringSupported {
+            connection.automaticallyAdjustsVideoMirroring = false
+            connection.isVideoMirrored = false
+            if connection.isVideoOrientationSupported { connection.videoOrientation = .portrait }
+        }
     }
 }
 
 final class PreviewView: UIView {
+    let effectImage = UIImageView()
+    var lastFocusTick = -1
+    var lastFocusPoint: CGPoint?
+    var lastFocusAt = Date.distantPast
+    var lastTapAt = Date.distantPast
+    weak var processor: RealtimePreviewProcessor?
+    deinit { processor?.detach() }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        effectImage.frame = bounds
+    }
+    private func setupEffectImage() {
+        effectImage.contentMode = .scaleAspectFill
+        effectImage.clipsToBounds = true
+        effectImage.isUserInteractionEnabled = false
+        effectImage.isHidden = true
+        addSubview(effectImage)
+    }
     override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
 
+    /// Never force-cast the backing layer: a SwiftUI re-parent or a container
+    /// change would turn a cosmetic change into a crash. Falls back to a
+    /// detached preview layer if the layer class ever differs.
     var previewLayer: AVCaptureVideoPreviewLayer {
-        layer as! AVCaptureVideoPreviewLayer
+        if let layer = layer as? AVCaptureVideoPreviewLayer { return layer }
+        let fallback = AVCaptureVideoPreviewLayer()
+        fallback.videoGravity = .resizeAspectFill
+        fallback.frame = bounds
+        layer.addSublayer(fallback)
+        return fallback
     }
 
     var onTap: ((CGPoint) -> Void)?
+    var onSubjectTap: ((CGPoint, Bool) -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         isUserInteractionEnabled = true
+        setupEffectImage()
         let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
         addGestureRecognizer(recognizer)
+        let hold = UILongPressGestureRecognizer(target: self, action: #selector(handleHold(_:)))
+        addGestureRecognizer(hold)
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         isUserInteractionEnabled = true
+        setupEffectImage()
         let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
         addGestureRecognizer(recognizer)
+        let hold = UILongPressGestureRecognizer(target: self, action: #selector(handleHold(_:)))
+        addGestureRecognizer(hold)
     }
 
+    private func visionPoint(_ point: CGPoint) -> CGPoint {
+        let image = effectImage.image?.size ?? CGSize(width: 3, height: 4)
+        let scale = max(bounds.width / image.width, bounds.height / image.height)
+        return CGPoint(x: max(0, min(1, (point.x - bounds.midX) / (image.width * scale) + 0.5)),
+                       y: max(0, min(1, 0.5 - (point.y - bounds.midY) / (image.height * scale))))
+    }
+    @objc private func handleHold(_ recognizer: UILongPressGestureRecognizer) {
+        guard recognizer.state == .began else { return }
+        lastTapAt = Date()
+        let point = recognizer.location(in: self)
+        onTap?(previewLayer.captureDevicePointConverted(fromLayerPoint: point))
+        onSubjectTap?(visionPoint(point), true)
+    }
     @objc private func handleTap(_ recognizer: UITapGestureRecognizer) {
+        lastTapAt = Date()
         let layerPoint = recognizer.location(in: self)
         // 交给系统做方向/镜像/aspectFill 的换算，避免手算错位
         let devicePoint = previewLayer.captureDevicePointConverted(fromLayerPoint: layerPoint)
         onTap?(devicePoint)
+        onSubjectTap?(visionPoint(layerPoint), false)
     }
 }
