@@ -17,7 +17,7 @@ final class RetouchRecovery {
     private let fm = FileManager.default
     private var root: URL { fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("CommercialRetouch", isDirectory: true) }
     func hasReservedAICall(job: UUID) -> Bool {
-        fm.fileExists(atPath: root.appendingPathComponent(job.uuidString).appendingPathComponent("ai-call-reserved"))
+        fm.fileExists(atPath: root.appendingPathComponent(job.uuidString).appendingPathComponent("ai-call-reserved").path)
     }
     /// An exclusive, durable reservation. A failed or interrupted request is never retried automatically.
     func reserveAICall(job: UUID) throws -> Bool {

@@ -704,7 +704,7 @@ struct CaptureView: View {
         .accessibilityElement(children: .contain)
     }
 
-    var body: some View {
+    private var captureBase: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             GeometryReader { geo in
@@ -763,6 +763,10 @@ struct CaptureView: View {
         .sheet(isPresented: $showingSettings) {
             SettingsView(isPresentedModally: true).preferredColorScheme(.light)
         }
+    }
+
+    private var captureLifecycle: some View {
+        captureBase
         .onAppear {
             guard self.isSelected else { return }
             OrientationPolicy.apply(allowsRotation ? .allButUpsideDown : .portrait)
@@ -814,6 +818,10 @@ struct CaptureView: View {
                 camera.stop()
             } else if isSelected && scenePhase == .active { camera.start() }
         }
+    }
+
+    var body: some View {
+        captureLifecycle
         .onChange(of: camera.photoToken) { _, _ in
             self.processLatestPhoto()
         }

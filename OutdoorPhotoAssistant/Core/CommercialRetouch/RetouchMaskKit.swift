@@ -1,6 +1,7 @@
 import Foundation
 import UIKit
 import CoreImage
+import CoreImage.CIFilterBuiltins
 import CoreGraphics
 
 // MARK: - FloatPlane
