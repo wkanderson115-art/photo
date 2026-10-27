@@ -1,6 +1,6 @@
 {
-  "revision": "live-preview-framing-prompt-repair",
-  "build": 15,
+  "revision": "camera-interface-controls-and-guidance",
+  "build": 27,
   "network_mode": "App_direct_to_DeepSeek_and_Seedream",
   "server_required": false,
   "custom_domain_required": false,
@@ -15,8 +15,8 @@
   "backend_code": "archived_in_docs_legacy_backend_not_active",
   "static_project_check": "passed",
   "direct_source_audit": "passed_16_checks",
-  "swift_syntax": "previous_full_parse_pass_incremental_files_delimiter_checked",
-  "swift_contract_tests": "updated_not_executed_no_swiftc",
+  "swift_syntax": "passed_26_app_3_test_files",
+  "swift_contract_tests": "source_updated_not_executed_no_swiftc",
   "xcode_build": "not_run_no_sdk",
   "live_api_test": "not_run_no_keys",
   "iphone_test": "not_run"

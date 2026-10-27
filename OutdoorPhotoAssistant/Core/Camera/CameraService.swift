@@ -42,7 +42,11 @@ final class CameraService: NSObject, ObservableObject {
     private var currentPosition: AVCaptureDevice.Position = .back
     private var isConfiguring = false
     private var wantsRunning = false // Access only on sessionQueue.
+    private var rotationCoordinator: AVCaptureDevice.RotationCoordinator? // Access only on sessionQueue.
+    private var rotationObservation: NSKeyValueObservation?
     private var requestedHighQuality = true
+    private var directorOwnsExposure = false
+    private var lastMotionExposureUpdate = Date.distantPast
     private var captureInFlight = 0
     private var pendingUserZoom: CGFloat?
     private var lastBias: Float = 0
@@ -55,12 +59,24 @@ final class CameraService: NSObject, ObservableObject {
     @Published var authorizationDenied = false
     @Published var errorMessage: String?
     @Published var zoom: CGFloat = 1
+    @Published var requestedFlash = false
+    @Published private(set) var flashAvailable = false
+    @Published private(set) var previewThumbnail: UIImage?
+    private var lastThumbnailTime = 0.0
+    private let thumbnailQueue = DispatchQueue(label: "opa.preview.thumbnail", qos: .utility)
+    private var thumbnailBusy = false
+    @Published private(set) var manualExposure = false
+    @Published private(set) var focusExposureLocked = false
+    private var userBias: Float = 0
     @Published var availableZooms: [CGFloat] = [1]
     @Published private(set) var nativeMaximumZoom: CGFloat = 1
     @Published private(set) var minimumZoom: CGFloat = 1
     @Published private(set) var maximumZoom: CGFloat = 1
     @Published var cameraPosition: AVCaptureDevice.Position = .back
     @Published var exposureText = "EV 0.0"
+    @Published private(set) var exposureSeconds = 1.0
+    @Published private(set) var controlsSettled = false
+    @Published private(set) var controlsUpdatedAt = Date.distantPast
     @Published var apertureText = "f/1.8"
     @Published var depthSupported = false
     @Published var portraitMatteSupported = false
@@ -71,6 +87,9 @@ final class CameraService: NSObject, ObservableObject {
     @Published var hardwareHDRActive = false
     @Published var latestPhoto: CapturedPhoto?
     @Published var photoToken = UUID()
+    /// Rotation (degrees) that makes the preview, analysis frames and photos upright for the way the
+    /// phone is held right now. 90 = portrait on the rear camera, 0 / 180 = the two landscapes.
+    @Published private(set) var previewRotationAngle: CGFloat = 90
 
     override init() {
         super.init()
@@ -243,16 +262,39 @@ final class CameraService: NSObject, ObservableObject {
         }
     }
 
+    /// Follows the physical orientation of the phone, so portrait and landscape shots are both upright.
+    /// `videoRotationAngleForHorizonLevelCapture` also accounts for the front camera.
+    private var currentRotationAngle: CGFloat {
+        rotationCoordinator?.videoRotationAngleForHorizonLevelCapture ?? 90
+    }
+
+    private func installRotationCoordinator(for device: AVCaptureDevice) {
+        rotationObservation?.invalidate()
+        let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
+        rotationCoordinator = coordinator
+        rotationObservation = coordinator.observe(\.videoRotationAngleForHorizonLevelCapture, options: [.new]) { [weak self] _, _ in
+            self?.sessionQueue.async { self?.configureConnections() }
+        }
+    }
+
     private func configureConnections() {
+        let angle = currentRotationAngle
+        func rotate(_ connection: AVCaptureConnection) {
+            if connection.isVideoRotationAngleSupported(angle) { connection.videoRotationAngle = angle }
+        }
         if let photoConnection = photoOutput.connection(with: .video) {
-            if photoConnection.isVideoOrientationSupported { photoConnection.videoOrientation = .portrait }
+            rotate(photoConnection)
             // 前置自拍按真实方向保存（不镜像）
             if photoConnection.isVideoMirroringSupported { photoConnection.automaticallyAdjustsVideoMirroring = false; photoConnection.isVideoMirrored = false }
         }
         if let videoConnection = videoOutput.connection(with: .video) {
-            if videoConnection.isVideoOrientationSupported { videoConnection.videoOrientation = .portrait }
-            // portrait physically rotates data buffers; Vision uses .up / .upMirrored.
+            // Analysis frames are physically rotated upright (portrait or landscape); Vision uses .up.
+            rotate(videoConnection)
             if videoConnection.isVideoMirroringSupported { videoConnection.automaticallyAdjustsVideoMirroring = false; videoConnection.isVideoMirrored = false }
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.previewRotationAngle != angle else { return }
+            self.previewRotationAngle = angle
         }
     }
 
@@ -263,6 +305,9 @@ final class CameraService: NSObject, ObservableObject {
         zoomRangeObservations.removeAll()
         zoomObservation?.invalidate()
         zoomObservation = nil
+        rotationObservation?.invalidate()
+        rotationObservation = nil
+        rotationCoordinator = nil
         if let input {
             session.removeInput(input)
             self.input = nil
@@ -324,6 +369,7 @@ final class CameraService: NSObject, ObservableObject {
         session.addInput(newInput)
         input = newInput
         currentDevice = device
+        installRotationCoordinator(for: device)
         observeZoom(device)
         stateLock.lock()
         currentPosition = position
@@ -392,7 +438,7 @@ final class CameraService: NSObject, ObservableObject {
             guard let self else { return }
             guard userZoom.isFinite else { return }
             let bounds = self.zoomBounds()
-            let target = max(bounds.lowerBound, min(userZoom, bounds.upperBound))
+            let target = max(bounds.lowerBound, min(100, min(userZoom, bounds.upperBound)))
             if self.isCaptureInFlight {
                 self.stateLock.lock()
                 self.pendingUserZoom = target
@@ -442,7 +488,7 @@ final class CameraService: NSObject, ObservableObject {
             } else if !device.isVirtualDevice, ultraWideDevice() != nil { minimum = min(minimum, 0.5) }
         }
         minimum = max(0.01, minimum)
-        return minimum...max(minimum, maximum)
+        return minimum...max(minimum, min(100, maximum))
     }
 
     private func updateZoomOptions() {
@@ -517,7 +563,7 @@ final class CameraService: NSObject, ObservableObject {
                         device.focusMode = .continuousAutoFocus
                     }
                 }
-                if device.isExposurePointOfInterestSupported {
+                if device.isExposurePointOfInterestSupported && !self.directorOwnsExposure {
                     device.exposurePointOfInterest = normalizedPoint
                     if device.isExposureModeSupported(.continuousAutoExposure) {
                         device.exposureMode = .continuousAutoExposure
@@ -529,6 +575,64 @@ final class CameraService: NSObject, ObservableObject {
         }
     }
 
+    func setUserExposure(_ bias: Float?) {
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            self.userBias = bias ?? 0
+            DispatchQueue.main.async { self.manualExposure = bias != nil }
+            guard let device = self.currentDevice else { return }
+            do {
+                try device.lockForConfiguration(); defer { device.unlockForConfiguration() }
+                device.setExposureTargetBias(max(device.minExposureTargetBias, min(device.maxExposureTargetBias, self.userBias)), completionHandler: nil)
+            } catch { }
+        }
+    }
+    func setFocusExposureLock(_ locked: Bool) {
+        sessionQueue.async { [weak self] in
+            guard let self, let device = self.currentDevice else { return }
+            do {
+                try device.lockForConfiguration(); defer { device.unlockForConfiguration() }
+                let focus: AVCaptureDevice.FocusMode = locked ? .locked : .continuousAutoFocus
+                let exposure: AVCaptureDevice.ExposureMode = locked ? .locked : .continuousAutoExposure
+                if device.isFocusModeSupported(focus) { device.focusMode = focus }
+                if !self.directorOwnsExposure && device.isExposureModeSupported(exposure) { device.exposureMode = exposure }
+                DispatchQueue.main.async { self.focusExposureLocked = locked }
+            } catch { }
+        }
+    }
+
+    /// Motion intent uses supported custom exposure only. Other intents restore AE.
+    func applyMotionExposure(enabled: Bool) {
+        sessionQueue.async { [weak self] in
+            guard let self, let device = self.currentDevice, !self.isCaptureInFlight else { return }
+            do {
+                try device.lockForConfiguration()
+                defer { device.unlockForConfiguration() }
+                if !enabled {
+                    if self.directorOwnsExposure && device.isExposureModeSupported(.continuousAutoExposure) {
+                        device.exposureMode = .continuousAutoExposure
+                    }
+                    self.directorOwnsExposure = false
+                    return
+                }
+                guard device.isExposureModeSupported(.custom), Date().timeIntervalSince(self.lastMotionExposureUpdate) > 1 else { return }
+                let format = device.activeFormat
+                let minimum = CMTimeGetSeconds(format.minExposureDuration)
+                let maximum = CMTimeGetSeconds(format.maxExposureDuration)
+                guard minimum.isFinite, maximum.isFinite, minimum > 0, maximum >= minimum else { return }
+                let duration = max(minimum, min(maximum, 1.0 / 500))
+                let old = CMTimeGetSeconds(device.exposureDuration)
+                guard old.isFinite, old > 0 else { return }
+                let correction = pow(2.0, -Double(device.exposureTargetOffset))
+                let targetISO = Double(device.iso) * old / duration * max(0.5, min(2, correction))
+                let iso = max(format.minISO, min(format.maxISO, Float(targetISO)))
+                device.setExposureModeCustom(duration: CMTime(seconds: duration, preferredTimescale: 1_000_000_000), iso: iso, completionHandler: nil)
+                self.directorOwnsExposure = true
+                self.lastMotionExposureUpdate = Date()
+            } catch { /* Retain normal exposure; do not claim a command succeeded. */ }
+        }
+    }
+
     /// 只做曝光补偿：所有机型都支持，且不会抢走系统的连续自动曝光。
     func applyExposureCompensation(brightness: Double, directorBias: Float? = nil) {
         sessionQueue.async { [weak self] in
@@ -537,8 +641,15 @@ final class CameraService: NSObject, ObservableObject {
             let seconds = CMTimeGetSeconds(device.exposureDuration)
             let exposure = seconds > 0 && seconds < 1 ? String(format: "1/%.0fs", 1 / seconds) : String(format: "%.2fs", seconds)
             let telemetry = String(format: "ISO %.0f · ", device.iso) + exposure
-            DispatchQueue.main.async { self.exposureText = telemetry }
+            let settled = !device.isAdjustingFocus && !device.isAdjustingExposure && !device.isRampingVideoZoom
+            DispatchQueue.main.async {
+                self.exposureSeconds = seconds
+                self.exposureText = telemetry
+                self.controlsSettled = settled
+                self.controlsUpdatedAt = Date()
+            }
 
+            guard !self.manualExposure, !self.focusExposureLocked else { return }
             var target: Float
             if brightness < 0.16 {
                 target = 0.4
@@ -551,7 +662,7 @@ final class CameraService: NSObject, ObservableObject {
             } else {
                 target = 0
             }
-            if let directorBias { target = directorBias }
+            if let directorBias, abs(directorBias) > 0.01 { target += directorBias }
             target = min(device.maxExposureTargetBias, max(device.minExposureTargetBias, target))
 
             let now = CFAbsoluteTimeGetCurrent()
@@ -576,14 +687,16 @@ final class CameraService: NSObject, ObservableObject {
     }
 
     func capture() {
+        let flashRequested = requestedFlash
         sessionQueue.async { [weak self] in
             guard let self else { return }
             guard self.session.isRunning, !self.isConfiguring, !self.isCaptureInFlight else { return }
 
             let settings = AVCapturePhotoSettings()
-            settings.flashMode = .off
+            settings.flashMode = flashRequested && self.photoOutput.supportedFlashModes.contains(.on) ? .on : .off
 
             self.engine.prepare(settings, output: self.photoOutput, highQuality: self.requestedHighQuality)
+            if self.directorOwnsExposure { settings.photoQualityPrioritization = .speed }
             self.configureConnections()
 
             self.stateLock.lock()
@@ -600,9 +713,11 @@ final class CameraService: NSObject, ObservableObject {
 
     private func publishHardwareState(_ device: AVCaptureDevice) {
         let profile = engine.profile
+        let supportsFlash = photoOutput.supportedFlashModes.contains(.on)
         let hdr = device.activeFormat.isVideoHDRSupported && device.isVideoHDREnabled
         let lowLight = device.isLowLightBoostEnabled
         DispatchQueue.main.async {
+            self.flashAvailable = supportsFlash
             self.cameraEngineSummary = profile.summary
             self.cameraEngineTier = profile.tier.rawValue
             self.lowLightBoostActive = lowLight
@@ -620,6 +735,21 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
         stateLock.lock()
         let position = currentPosition
         stateLock.unlock()
+        let time = ProcessInfo.processInfo.systemUptime
+        if time - lastThumbnailTime > 1.5, !thumbnailBusy, let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) {
+            lastThumbnailTime = time; thumbnailBusy = true
+            thumbnailQueue.async { [weak self] in
+                guard let self else { return }
+                let image: UIImage? = autoreleasepool {
+                    let input = CIImage(cvPixelBuffer: buffer)
+                    let scale = 240 / max(input.extent.width, input.extent.height)
+                    let small = input.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+                    return ImagePipeline.context.createCGImage(small, from: small.extent).map { UIImage(cgImage: $0) }
+                }
+                DispatchQueue.main.async { self.previewThumbnail = image }
+                self.videoQueue.async { self.thumbnailBusy = false }
+            }
+        }
         onFrame?(sampleBuffer, position)
         realtimePreview.consume(sampleBuffer)
     }
@@ -688,6 +818,9 @@ struct CameraPreview: UIViewRepresentable {
     @ObservedObject var camera: CameraService
     var options: PhotoRenderOptions
     var effectsEnabled: Bool
+    var autoFocusPoint: CGPoint? = nil
+    var focusObservationTick: Int = 0
+    var onSubjectTap: ((CGPoint, Bool) -> Void)? = nil
 
     func makeUIView(context: Context) -> PreviewView {
         let service = camera
@@ -705,20 +838,39 @@ struct CameraPreview: UIViewRepresentable {
             uiView?.effectImage.image = cg.map { UIImage(cgImage: $0) }
             uiView?.effectImage.isHidden = cg == nil
         }
+        uiView.onSubjectTap = onSubjectTap
         uiView.processor = camera.realtimePreview
-        // 滤镜画面覆盖在取景层上，前摄时两层必须采用相同的镜像方向。
-        uiView.effectImage.transform = camera.cameraPosition == .front
-            ? CGAffineTransform(scaleX: -1, y: 1) : .identity
+        if !camera.focusExposureLocked, let point = autoFocusPoint, uiView.lastFocusTick != focusObservationTick,
+           Date().timeIntervalSince(uiView.lastFocusAt) > 1.2,
+           Date().timeIntervalSince(uiView.lastTapAt) > 5, uiView.bounds.width > 0,
+           uiView.lastFocusPoint.map({ hypot($0.x - point.x, $0.y - point.y) > 0.06 }) ?? true {
+            uiView.lastFocusTick = focusObservationTick
+            uiView.lastFocusAt = Date()
+            uiView.lastFocusPoint = point
+            let imageSize = uiView.effectImage.image?.size ?? CGSize(width: 3, height: 4)
+            let scale = max(uiView.bounds.width / imageSize.width, uiView.bounds.height / imageSize.height)
+            let layerPoint = CGPoint(x: (point.x - 0.5) * imageSize.width * scale + uiView.bounds.midX,
+                                     y: (0.5 - point.y) * imageSize.height * scale + uiView.bounds.midY)
+            let converted = uiView.previewLayer.captureDevicePointConverted(fromLayerPoint: layerPoint)
+            if (0...1).contains(converted.x), (0...1).contains(converted.y) {
+                camera.setFocusAndExposure(normalizedPoint: converted)
+            }
+        }
         if let connection = uiView.previewLayer.connection, connection.isVideoMirroringSupported {
             connection.automaticallyAdjustsVideoMirroring = false
-            connection.isVideoMirrored = camera.cameraPosition == .front
-            if connection.isVideoOrientationSupported { connection.videoOrientation = .portrait }
+            connection.isVideoMirrored = false
+            let angle = camera.previewRotationAngle
+            if connection.isVideoRotationAngleSupported(angle) { connection.videoRotationAngle = angle }
         }
     }
 }
 
 final class PreviewView: UIView {
     let effectImage = UIImageView()
+    var lastFocusTick = -1
+    var lastFocusPoint: CGPoint?
+    var lastFocusAt = Date.distantPast
+    var lastTapAt = Date.distantPast
     weak var processor: RealtimePreviewProcessor?
     deinit { processor?.detach() }
     override func layoutSubviews() {
@@ -734,11 +886,20 @@ final class PreviewView: UIView {
     }
     override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
 
+    /// Never force-cast the backing layer: a SwiftUI re-parent or a container
+    /// change would turn a cosmetic change into a crash. Falls back to a
+    /// detached preview layer if the layer class ever differs.
     var previewLayer: AVCaptureVideoPreviewLayer {
-        layer as! AVCaptureVideoPreviewLayer
+        if let layer = layer as? AVCaptureVideoPreviewLayer { return layer }
+        let fallback = AVCaptureVideoPreviewLayer()
+        fallback.videoGravity = .resizeAspectFill
+        fallback.frame = bounds
+        layer.addSublayer(fallback)
+        return fallback
     }
 
     var onTap: ((CGPoint) -> Void)?
+    var onSubjectTap: ((CGPoint, Bool) -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -746,6 +907,8 @@ final class PreviewView: UIView {
         setupEffectImage()
         let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
         addGestureRecognizer(recognizer)
+        let hold = UILongPressGestureRecognizer(target: self, action: #selector(handleHold(_:)))
+        addGestureRecognizer(hold)
     }
 
     required init?(coder: NSCoder) {
@@ -754,12 +917,29 @@ final class PreviewView: UIView {
         setupEffectImage()
         let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
         addGestureRecognizer(recognizer)
+        let hold = UILongPressGestureRecognizer(target: self, action: #selector(handleHold(_:)))
+        addGestureRecognizer(hold)
     }
 
+    private func visionPoint(_ point: CGPoint) -> CGPoint {
+        let image = effectImage.image?.size ?? CGSize(width: 3, height: 4)
+        let scale = max(bounds.width / image.width, bounds.height / image.height)
+        return CGPoint(x: max(0, min(1, (point.x - bounds.midX) / (image.width * scale) + 0.5)),
+                       y: max(0, min(1, 0.5 - (point.y - bounds.midY) / (image.height * scale))))
+    }
+    @objc private func handleHold(_ recognizer: UILongPressGestureRecognizer) {
+        guard recognizer.state == .began else { return }
+        lastTapAt = Date()
+        let point = recognizer.location(in: self)
+        onTap?(previewLayer.captureDevicePointConverted(fromLayerPoint: point))
+        onSubjectTap?(visionPoint(point), true)
+    }
     @objc private func handleTap(_ recognizer: UITapGestureRecognizer) {
+        lastTapAt = Date()
         let layerPoint = recognizer.location(in: self)
         // 交给系统做方向/镜像/aspectFill 的换算，避免手算错位
         let devicePoint = previewLayer.captureDevicePointConverted(fromLayerPoint: layerPoint)
         onTap?(devicePoint)
+        onSubjectTap?(visionPoint(layerPoint), false)
     }
 }

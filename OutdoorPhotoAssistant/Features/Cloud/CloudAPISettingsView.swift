@@ -9,11 +9,15 @@ struct CloudAPISettingsView: View {
     @State private var status: String?
     @AppStorage("cloudUseDeepSeekFirst") private var useDeepSeekFirst = true
     @AppStorage("seedreamModel") private var seedreamModel = CloudConfiguration.seedreamDefault
+    @AppStorage("deepSeekModel") private var deepSeekModel = CloudConfiguration.deepSeekDefault
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Text("直接连接模型平台，无需服务器月租；模型按实际使用计费。")
-                    .font(.subheadline).foregroundStyle(AppTheme.muted)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("按需连接云端").font(.title3.bold()).foregroundStyle(AppTheme.ink)
+                    Text("看图建议和照片精修分别配置；只有你发起处理时才上传。")
+                        .font(.subheadline).foregroundStyle(AppTheme.muted)
+                }
                 keyCard(title: "DeepSeek", subtitle: "看图识别与自然修图建议", key: $deepSeekKey, configured: hasDeepSeekKey, provider: .deepseek)
                 keyCard(title: "Seedream", subtitle: "照片精修 · 火山方舟 Key", key: $seedreamKey, configured: hasSeedreamKey, provider: .seedream)
                 if let status { Text(status).font(.footnote).foregroundStyle(AppTheme.ink).appCard() }
@@ -24,9 +28,22 @@ struct CloudAPISettingsView: View {
                     .font(.footnote).foregroundStyle(AppTheme.muted)
                 DisclosureGroup("模型与平台") {
                     VStack(alignment: .leading, spacing: 12) {
-                        LabeledContent("看图模型", value: CloudConfiguration.deepSeekDefault)
-                        TextField("Seedream模型或接入点ID", text: $seedreamModel)
-                            .textInputAutocapitalization(.never).autocorrectionDisabled().textFieldStyle(.roundedBorder)
+                        Text("看图模型（DeepSeek）").font(.caption).foregroundStyle(AppTheme.muted)
+                        TextField(CloudConfiguration.deepSeekDefault, text: $deepSeekModel)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.asciiCapable)
+                            .textFieldStyle(.roundedBorder)
+                        if !Self.validModelID(deepSeekModel) {
+                            Text("模型ID只能包含字母、数字与 . _ : -，且不超过120个字符；留空则使用默认模型。")
+                                .font(.caption).foregroundStyle(.red)
+                        }
+                        Text("Seedream模型或接入点ID").font(.caption).foregroundStyle(AppTheme.muted)
+                        TextField(CloudConfiguration.seedreamDefault, text: $seedreamModel)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.asciiCapable)
+                            .textFieldStyle(.roundedBorder)
+                        if !Self.validModelID(seedreamModel) {
+                            Text("模型ID只能包含字母、数字与 . _ : -，且不超过120个字符；留空则使用默认模型。")
+                                .font(.caption).foregroundStyle(.red)
+                        }
                         Link("DeepSeek 开放平台", destination: URL(string: "https://platform.deepseek.com/")!)
                         Link("火山方舟控制台", destination: URL(string: "https://console.volcengine.com/ark")!)
                         Text("照片直接发送到对应平台，不经过本应用自建服务器。下载结果不附带Key；链接可能过期，请及时保存。")
@@ -47,6 +64,10 @@ struct CloudAPISettingsView: View {
                 .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.asciiCapable)
                 .padding(12).background(AppTheme.paper, in: RoundedRectangle(cornerRadius: 10)).privacySensitive()
             Button("保存 " + title + " Key") {
+                guard !key.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    status = "请先输入 " + title + " API Key，再保存。"
+                    return
+                }
                 do {
                     let value = try CloudHTTP.validatedKey(key.wrappedValue, provider: title)
                     try APIKeyStore.save(value, for: provider)
@@ -67,5 +88,11 @@ struct CloudAPISettingsView: View {
     private func refreshStatus() {
         hasDeepSeekKey = !APIKeyStore.read(.deepseek).isEmpty
         hasSeedreamKey = !APIKeyStore.read(.seedream).isEmpty
+    }
+    /// Blank is valid: the caller falls back to the built-in default.
+    private static func validModelID(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return true }
+        do { try CloudHTTP.checkModel(trimmed); return true } catch { return false }
     }
 }

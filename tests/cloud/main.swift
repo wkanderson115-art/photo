@@ -33,7 +33,11 @@ final class MockProtocol: URLProtocol {
         config.protocolClasses = [MockProtocol.self]
         let session = URLSession(configuration: config)
         defer { session.invalidateAndCancel() }
-        let request = try DeepSeekClient.request(jpeg: jpeg, instruction: "自然肤色", key: "fixture-deepseek", model: "deepseek-flash")
+        // A stale or invented DeepSeek model id fails every advice request, and the
+        // settings UI reads the same source, so the id is asserted, not assumed.
+        expect(["deepseek-v4.1-flash", "deepseek-v4-pro"].contains(CloudConfiguration.deepSeekDefault),
+               "Default DeepSeek model id is a currently supported official id")
+        let request = try DeepSeekClient.request(jpeg: jpeg, instruction: "自然肤色", key: "fixture-deepseek", model: CloudConfiguration.deepSeekDefault)
         expect(request.url?.absoluteString == "https://api.deepseek.com/chat/completions", "DeepSeek goes directly to its official endpoint")
         expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer fixture-deepseek", "DeepSeek uses its own credential")
         let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
@@ -42,6 +46,8 @@ final class MockProtocol: URLProtocol {
         let image = parts[1]["image_url"] as! [String: Any]
         expect(image["url"] as? String == "data:image/jpeg;base64," + jpeg.base64EncodedString(), "Advice receives actual selected image bytes")
         expect(body["response_format"] != nil, "Structured JSON advice requested")
+        expect(body["model"] as? String == CloudConfiguration.deepSeekDefault,
+               "Advice request sends the configured DeepSeek model id, not a hardcoded one")
         expect((messages[0]["content"] as! String).contains("最多3条"), "Advice is bounded and natural")
         let prompt = NaturalPhotoPolicy.editPrompt("稍微降低天空高光")
         expect(NaturalPhotoPolicy.editPrompt(prompt) == prompt, "Natural prefix is idempotent")
@@ -52,7 +58,18 @@ final class MockProtocol: URLProtocol {
         expect(edit.value(forHTTPHeaderField: "Authorization") == "Bearer fixture-seedream", "Seedream uses its own credential")
         expect(editBody["prompt"] as? String == prompt, "Direct edits retain natural constraints exactly once")
         expect(editBody["response_format"] as? String == "url", "Persistent result link enables download-only recovery")
-        expect(editBody["watermark"] as? Bool == true && editBody["sequential_image_generation"] == nil, "Preserve watermark and omit unsupported batch parameter")
+        expect(editBody["watermark"] as? Bool == true, "Default watermark is true")
+        expect(editBody["size"] as? String == "2K", "Default resolution is 2K")
+        expect(editBody["output_format"] as? String == "jpeg", "Default format is jpeg")
+        expect(editBody["sequential_image_generation"] == nil, "Omit unsupported batch parameter")
+        let noWatermarkOutput = SeedreamOutputSettings(watermark: false)
+        let editNoWM = try SeedreamClient.request(jpeg: jpeg, prompt: prompt, key: "fixture-seedream", model: "doubao-seedream-5-0-pro-260628", output: noWatermarkOutput)
+        let editNoWMBody = try JSONSerialization.jsonObject(with: editNoWM.httpBody!) as! [String: Any]
+        expect(editNoWMBody["watermark"] as? Bool == false, "Watermark can be disabled")
+        let k15Output = SeedreamOutputSettings(resolution: .k15)
+        let editK15 = try SeedreamClient.request(jpeg: jpeg, prompt: prompt, key: "fixture-seedream", model: "doubao-seedream-5-0-pro-260628", output: k15Output)
+        let editK15Body = try JSONSerialization.jsonObject(with: editK15.httpBody!) as! [String: Any]
+        expect(editK15Body["size"] as? String == "1.5K", "Resolution can be 1.5K")
         let download = try SeedreamClient.downloadRequest(URL(string: "https://fixture.example.invalid/result.jpg?signature=fixture")!)
         expect(download.value(forHTTPHeaderField: "Authorization") == nil, "Download URLs never receive API keys")
         for unsafe in ["http://example.invalid/result.jpg", "https://user:pass@example.invalid/result.jpg"] {
@@ -60,7 +77,7 @@ final class MockProtocol: URLProtocol {
             catch CloudAPIError.unsafeURL { print("PASS: unsafe download URL rejected") }
         }
         for key in ["", "key\r\ninjected", "key with space"] {
-            do { _ = try DeepSeekClient.request(jpeg: jpeg, instruction: "自然", key: key, model: "deepseek-flash"); fatalError("Invalid key accepted") }
+            do { _ = try DeepSeekClient.request(jpeg: jpeg, instruction: "自然", key: key, model: CloudConfiguration.deepSeekDefault); fatalError("Invalid key accepted") }
             catch { print("PASS: invalid credential rejected before network") }
         }
         do { _ = try SeedreamClient.request(jpeg: jpeg, prompt: "自然", key: "fixture", model: "bad/model"); fatalError("Bad model accepted") }
@@ -69,13 +86,13 @@ final class MockProtocol: URLProtocol {
         catch CloudAPIError.invalidInput { print("PASS: empty edit prompt rejected") }
         let adviceObject: [String: Any] = ["scene": "山景人像", "strengths": ["光线自然"], "issues": [], "recommendations": [], "edit_prompt": "保持原片", "preserve": ["肤色"]]
         let content = String(data: try JSONSerialization.data(withJSONObject: adviceObject), encoding: .utf8)!
-        let reply = try JSONSerialization.data(withJSONObject: ["choices": [["message": ["content": content]]], "model": "deepseek-flash", "usage": ["prompt_tokens": 100, "completion_tokens": 30]])
+        let reply = try JSONSerialization.data(withJSONObject: ["choices": [["message": ["content": content]]], "model": CloudConfiguration.deepSeekDefault, "usage": ["prompt_tokens": 100, "completion_tokens": 30]])
         MockProtocol.calls = 0
         MockProtocol.handler = { request in
             expect(request.url?.host == "api.deepseek.com", "Advice does not call Seedream")
             return (200, reply)
         }
-        let advice = try await DeepSeekClient(session: session).analyze(jpeg: jpeg, instruction: "自然", key: "fixture-deepseek", model: "deepseek-flash")
+        let advice = try await DeepSeekClient(session: session).analyze(jpeg: jpeg, instruction: "自然", key: "fixture-deepseek", model: CloudConfiguration.deepSeekDefault)
         expect(advice.advice.scene == "山景人像" && advice.usage.inputTokens == 100, "Advice and usage decoded")
         expect(MockProtocol.calls == 1, "One explicit analysis produces one request")
         MockProtocol.calls = 0
@@ -86,7 +103,7 @@ final class MockProtocol: URLProtocol {
         for status in [401, 403, 429, 500] {
             MockProtocol.calls = 0
             MockProtocol.handler = { _ in (status, Data("fixture-deepseek-secret-upstream-error".utf8)) }
-            do { _ = try await DeepSeekClient(session: session).analyze(jpeg: jpeg, instruction: "自然", key: "fixture-deepseek", model: "deepseek-flash"); fatalError("HTTP failure accepted") }
+            do { _ = try await DeepSeekClient(session: session).analyze(jpeg: jpeg, instruction: "自然", key: "fixture-deepseek", model: CloudConfiguration.deepSeekDefault); fatalError("HTTP failure accepted") }
             catch {
                 expect(!error.localizedDescription.contains("fixture-deepseek"), "Errors do not disclose provider credentials or payloads")
                 expect(MockProtocol.calls == 1, "HTTP failure is not automatically retried")
@@ -98,6 +115,30 @@ final class MockProtocol: URLProtocol {
         let excess = try JSONSerialization.data(withJSONObject: adviceObject.merging(["issues": ["1", "2", "3", "4"]]) { _, new in new })
         do { _ = try JSONDecoder().decode(PhotoAdvice.self, from: excess).validated(); fatalError("Overbroad advice accepted") }
         catch CloudAPIError.invalidAdvice { print("PASS: more than three issues rejected") }
+        let customInstruction = "精修分类：自然肤质。期望成片：干净肤色；验收标准：毛孔可见；必须保留：雀斑"
+        let combined = try DeepSeekClient.request(jpeg: jpeg, instruction: customInstruction, key: "fixture", model: CloudConfiguration.deepSeekDefault)
+        let combinedBody = try JSONSerialization.jsonObject(with: combined.httpBody!) as! [String: Any]
+        let messages = combinedBody["messages"] as! [[String: Any]]
+        let parts = messages.last!["content"] as! [[String: Any]]
+        expect((parts.first?["text"] as? String)?.contains(customInstruction) == true, "Exact user goals and standards sent in user content")
+        expect(parts.contains { $0["type"] as? String == "image_url" }, "Photo accompanies requirements in same user message")
+        let withReference = try DeepSeekClient.request(jpeg: jpeg, instruction: customInstruction, key: "fixture", model: CloudConfiguration.deepSeekDefault, referenceJPEG: jpeg)
+        let refBody = try JSONSerialization.jsonObject(with: withReference.httpBody!) as! [String: Any]
+        let refMessages = refBody["messages"] as! [[String: Any]]
+        let refParts = refMessages.last!["content"] as! [[String: Any]]
+        expect(refParts.filter { $0["type"] as? String == "image_url" }.count == 2, "Primary and style reference coexist in same request")
+        expect(refParts.contains { ($0["text"] as? String)?.contains("第二张仅为") == true }, "Reference is explicitly labeled style-only")
+        let lockedStyle = NaturalPhotoPolicy.styleBoundary(strength: "明显", allowCrop: false, allowCleanup: false, scope: "")
+        expect(lockedStyle.contains("裁切：不允许") && lockedStyle.contains("移除杂物：不允许"), "Strong style never grants content changes")
+        let missingScope = NaturalPhotoPolicy.styleBoundary(strength: "适中", allowCrop: true, allowCleanup: true, scope: "  ")
+        expect(missingScope.contains("裁切：不允许"), "Missing scope fails closed")
+        let scopedStyle = NaturalPhotoPolicy.styleBoundary(strength: "适中", allowCrop: true, allowCleanup: false, scope: "仅裁掉底部空白")
+        expect(scopedStyle.contains("裁切：仅限") && scopedStyle.contains("移除杂物：不允许"), "Crop and cleanup permissions remain independent")
+        expect(RetouchReferenceBank.cards.count == 12, "Twelve named categories have reference cards")
+        expect(RetouchReferenceBank.selected(for: "精修分类：黑白肖像。保留细节").name == "黑白肖像", "Exact classification routes to its reference")
+        expect(RetouchReferenceBank.selected(for: "请自然处理").name == "按照片诊断", "Custom instructions use diagnostic reference")
+        expect(RetouchReferenceBank.context(for: "精修分类：复古胶片。").contains("细颗粒"), "Film reference includes distinct method")
+        expect(RetouchReferenceBank.context(for: "精修分类：自然肤质。").contains("毛孔"), "Skin reference protects texture")
         print("Direct-provider contract tests passed (mock transport only; no paid calls)")
     }
 }

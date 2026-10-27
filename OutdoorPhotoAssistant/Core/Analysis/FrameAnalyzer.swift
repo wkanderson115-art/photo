@@ -5,13 +5,9 @@ import CoreImage
 import Vision
 import UIKit
 
-struct SubjectInfo: Equatable {
-    var type: String = "未知"
-    var rect: CGRect = .zero
-    var confidence: Float = 0
-}
-
-/// 实时分析中枢。
+/// Real-time analysis hub. Subject type, composition scoring and quality
+/// heuristics now live in `FrameScoring` so they are testable without UIKit;
+/// this file keeps the camera/Vision integration and the publish loop.
 ///
 /// 相比上一版的改动：
 /// - 用"时间门控"代替"每 N 帧"，掉帧时行为一致；
@@ -23,6 +19,13 @@ final class FrameAnalyzer: ObservableObject {
     @Published var directorObservation = DirectorObservation()
     @Published var directorDecision = DirectorDecision()
     @Published var observationTick = 0
+    @Published var visionEvidence = DirectorVisionEvidence()
+    @Published var visionEvidenceAt = Date.distantPast
+    private var latestVision = DirectorVisionEvidence()
+    private var latestVisionAt = Date.distantPast
+    private var latestML: DirectorMLOutput?
+    private var latestMLAt = -Double.infinity
+    private var mlSmoother = DirectorMLSmoother()
     @Published var subject = SubjectInfo()
     @Published var frameAspectRatio: CGFloat = 0.75
     @Published var brightness: Double = 0.5
@@ -48,6 +51,11 @@ final class FrameAnalyzer: ObservableObject {
 
     private let analysisQueue = DispatchQueue(label: "opa.analysis", qos: .userInitiated)
     private let stateLock = NSLock()
+    private var selectedPoint: CGPoint?
+    private var selectedRect: CGRect?
+    func selectSubject(at point: CGPoint?) {
+        stateLock.lock(); selectedPoint = point; selectedRect = nil; stateLock.unlock()
+    }
 
     private var inFlight = false
     private var lastFast: CFAbsoluteTime = 0
@@ -62,6 +70,14 @@ final class FrameAnalyzer: ObservableObject {
     private let humanRequest: VNDetectHumanRectanglesRequest = {
         let request = VNDetectHumanRectanglesRequest()
         request.upperBodyOnly = false
+        // iOS 18 ships a higher-accuracy revision 2 of the human-rectangle
+        // detector. Use it when available; older OS revisions fall back to the
+        // default revision 1. The full Swift `DetectHumanRectanglesRequest`
+        // struct migration is tracked as a follow-up — its result type differs
+        // from VNHumanObservation and needs a parallel accessor path.
+        if #available(iOS 18.0, *) {
+            request.revision = VNDetectHumanRectanglesRequestRevision2
+        }
         return request
     }()
     private let saliencyRequest = VNGenerateAttentionBasedSaliencyImageRequest()
@@ -161,8 +177,39 @@ final class FrameAnalyzer: ObservableObject {
             kind = "object"
         }
 
+        stateLock.lock()
+        let requestedPoint = selectedPoint
+        let previousSelection = selectedRect
+        stateLock.unlock()
+        if let point = requestedPoint {
+            let boxes = humans.isEmpty ? faces.map { $0.boundingBox } : humans.map { $0.boundingBox }
+            let chosen: CGRect?
+            if let previousSelection {
+                chosen = boxes.max(by: { $0.intersection(previousSelection).areaValue < $1.intersection(previousSelection).areaValue })
+                    .flatMap { $0.intersection(previousSelection).areaValue / max(0.0001, previousSelection.areaValue) > 0.25 ? $0 : nil }
+            } else { chosen = boxes.filter { $0.contains(point) }.min(by: { $0.areaValue < $1.areaValue }) }
+            if let chosen {
+                info = SubjectInfo(type: "人物", rect: chosen, confidence: 0.7)
+                kind = humans.isEmpty ? "face" : "body"
+                stateLock.lock(); if selectedPoint == requestedPoint { selectedRect = chosen }; stateLock.unlock()
+            } else { info = SubjectInfo(); kind = "none" }
+        }
         let horizon = succeeded.contains(ObjectIdentifier(horizonRequest)) ? Double(horizonRequest.results?.first?.angle ?? 0) : 0
-        let scene = Self.classifyScene(labels: lastLabels, personConfidence: personConfidence)
+        // Learned director: runs on the same slow tick as scene classification; no model bundled = nil.
+        let nowTime = CFAbsoluteTimeGetCurrent()
+        if classify && DirectorMLModel.shared.isAvailable {
+            if let raw = DirectorMLModel.shared.predict(buffer: buffer) {
+                latestML = mlSmoother.update(raw, now: nowTime)
+                latestMLAt = nowTime
+            } else { latestML = nil; mlSmoother.reset() }
+        }
+        let mlForFrame: DirectorMLOutput? = nowTime - latestMLAt < 1.5 ? latestML : nil
+        var scene = Self.classifyScene(labels: lastLabels, personConfidence: personConfidence)
+        // The model may refine non-person scenes; people stay Vision's call.
+        if let ml = mlForFrame, ml.scene != "人物", personConfidence < 0.35,
+           ml.sceneConfidence >= 0.6, ml.sceneConfidence > scene.confidence {
+            scene = (name: ml.scene, confidence: ml.sceneConfidence)
+        }
 
         // 场景滞回：连续 3 帧同场景才切换，避免 人物/风景 反复跳变
         if scene.name == sceneCandidate {
@@ -179,33 +226,60 @@ final class FrameAnalyzer: ObservableObject {
         let period = currentPeriod
         periodLockRef.unlock()
 
-        let directorObservation = Self.directorStatistics(buffer, subject: info, kind: kind,
+        var directorObservation = Self.directorStatistics(buffer, subject: info, kind: kind,
                                                          personCount: personCount, brightness: brightness,
                                                          sharpness: sharpness, horizon: horizon)
-        let score = Self.composeScore(subject: info, brightness: brightness, horizon: horizon)
+        directorObservation.ml = mlForFrame
+        if classify {
+            let full = CIImage(cvPixelBuffer: buffer)
+            if requestedPoint != nil && info.rect != .zero {
+                let b = info.rect
+                let roi = CGRect(x: b.minX * full.extent.width, y: b.minY * full.extent.height, width: b.width * full.extent.width, height: b.height * full.extent.height)
+                var selectedEvidence = DirectorVision.inspect(full.cropped(to: roi).transformed(by: CGAffineTransform(translationX: -roi.minX, y: -roi.minY)))
+                if let point = selectedEvidence.focusPoint {
+                    selectedEvidence.focusPoint = CGPoint(x: b.minX + point.x * b.width, y: b.minY + point.y * b.height)
+                }
+                latestVision = selectedEvidence
+            } else { latestVision = DirectorVision.inspect(full) }
+            latestVisionAt = Date()
+        }
+        let vision = latestVision
+        let visionAt = latestVisionAt
+        let score = FrameScoring.composeScore(subject: info, brightness: brightness, horizon: horizon)
         let filter = PhotoFilter.recommended(scene: effectiveScene, brightness: brightness, period: period)
         let grade = ColorGrade.automatic(scene: effectiveScene,
                                          brightness: brightness,
                                          period: period,
                                          confidence: sceneConfidence)
-        let framing = Self.framingHint(subject: info, scene: effectiveScene)
-        let exposure = Self.exposureQuality(brightness)
-        let level = Self.qualityLevel(exposure: exposure, composition: score, sharpness: sharpness)
+        let framing = FrameScoring.framingHint(subject: info, scene: effectiveScene)
+        let exposure = FrameScoring.exposureQuality(brightness)
+        let level = FrameScoring.qualityLevel(exposure: exposure, composition: score, sharpness: sharpness)
         let zoom = Self.recommendedZoom(scene: effectiveScene, subject: info)
 
         let geometryOK = abs(horizon) < 0.06 && brightness > 0.16 && brightness < 0.88
         let threshold = info.rect == .zero ? 66 : 76
-        let readyNow = score >= threshold && geometryOK
+        // Loose veto only: the model never forces a shot, it can just hold one back.
+        let modelOK = (mlForFrame?.quality ?? 1) >= 0.25
+        let readyNow = score >= threshold && geometryOK && modelOK
         readinessStreak = readyNow ? readinessStreak + 1 : 0
         let ready = readinessStreak >= 3
         let held = score >= max(0, threshold - 4) && abs(horizon) < 0.08 && brightness > 0.14 && brightness < 0.90
-        let readyReason = ready ? "最佳构图已锁定，可以拍摄" : "调整角度、水平或光线后再拍"
+        let readyReason: String
+        if ready { readyReason = "最佳构图已锁定，可以拍摄" }
+        else if abs(horizon) >= 0.06 { readyReason = String(format: "水平倾斜 %.1f°，先校平手机", abs(horizon) * 180 / .pi) }
+        else if brightness <= 0.16 { readyReason = "光线不足，补光或移到亮处" }
+        else if brightness >= 0.88 { readyReason = "高光过强，压低曝光或换角度" }
+        else if !modelOK { readyReason = "AI 导演认为取景偏差较大，先按提示调整" }
+        else if score < threshold { readyReason = "构图分 \(score)/\(threshold)，调整主体位置" }
+        else { readyReason = "等待构图稳定确认" }
 
         guard publish else { return }
         let sceneName = effectiveScene
         let aspectRatio = CGFloat(CVPixelBufferGetWidth(buffer)) / CGFloat(max(1, CVPixelBufferGetHeight(buffer)))
 
         DispatchQueue.main.async {
+            self.visionEvidence = vision
+            self.visionEvidenceAt = visionAt
             self.subject = info
             self.frameAspectRatio = aspectRatio
             self.brightness = brightness
@@ -258,7 +332,7 @@ final class FrameAnalyzer: ObservableObject {
                 aestheticsRequest = request
                 requests.append(request)
             }
-            let requestsSucceeded = (try? handler.perform(requests)) != nil
+            try? handler.perform(requests)
 
             let faces = faceRequest.results ?? []
             let humans = humanRequest.results ?? []
@@ -270,13 +344,13 @@ final class FrameAnalyzer: ObservableObject {
             }
 
             let brightness = Self.measureImageBrightness(cgImage)
-            let horizon = requestsSucceeded ? Double(horizonRequest.results?.first?.angle ?? 0) : 0
+            let horizon = Double(horizonRequest.results?.first?.angle ?? 0)
             var aesthetics: Float?
             if #available(iOS 18.0, *),
                let request = aestheticsRequest as? VNCalculateImageAestheticsScoresRequest {
                 aesthetics = request.results?.first?.overallScore
             }
-            let score = Self.composeScore(subject: info, brightness: brightness, horizon: horizon)
+            let score = FrameScoring.composeScore(subject: info, brightness: brightness, horizon: horizon)
             let aestheticValue = aesthetics.map { Double($0) }
             completion(aestheticValue, score, horizon, info)
         }
@@ -311,43 +385,7 @@ final class FrameAnalyzer: ObservableObject {
         return best
     }
 
-    // MARK: - 构图评分（0–100，可解释）
-
-    static func composeScore(subject: SubjectInfo, brightness: Double, horizon: Double) -> Int {
-        var score = 0.0
-
-        if subject.rect != .zero {
-            let midX = Double(subject.rect.midX)
-            let midY = Double(subject.rect.midY)
-            let spatial = DirectorCropImportance.score(x: midX, y: midY, ruleOfThirds: subject.type != "人物")
-            score += 40 * min(1, max(0, spatial / 1.41))
-
-            let inset = Double(min(subject.rect.minX,
-                                   subject.rect.minY,
-                                   1 - subject.rect.maxX,
-                                   1 - subject.rect.maxY))
-            score += 15 * min(1, max(0, inset / 0.08))
-        } else {
-            score += 27   // 无主体：拿不到三分位置与留白分，只保留基础分
-        }
-
-        score += 25 * max(0, 1 - abs(horizon) / 0.12)
-        score += 20 * max(0, 1 - abs(brightness - 0.52) / 0.28)
-        return max(0, min(100, Int(score.rounded())))
-    }
-
     // MARK: - 文案与质量分
-
-    private static func framingHint(subject: SubjectInfo, scene: String) -> String {
-        guard subject.rect != .zero else {
-            return scene == "风景" ? "寻找前景层次，避免主体贴边" : "等待识别主体"
-        }
-        let x = subject.rect.midX
-        if x < 0.30 { return "主体偏左：右侧保留视线空间" }
-        if x > 0.70 { return "主体偏右：左侧保留视线空间" }
-        if abs(x - 0.5) < 0.10 { return "主体居中：尝试向三分线移动" }
-        return "主体位置合适，保持当前取景"
-    }
 
     private static func gradeSummary(_ grade: ColorGrade, filter: PhotoFilter) -> String {
         var parts = [filter.rawValue]
@@ -363,20 +401,6 @@ final class FrameAnalyzer: ObservableObject {
         if subject.rect != .zero { return 1 }
         if scene == "建筑" { return 0.5 }
         return 1
-    }
-
-    private static func exposureQuality(_ brightness: Double) -> Int {
-        if brightness < 0.10 || brightness > 0.95 { return 40 }
-        if brightness < 0.16 || brightness > 0.90 { return 62 }
-        if brightness < 0.22 || brightness > 0.85 { return 80 }
-        return 100
-    }
-
-    private static func qualityLevel(exposure: Int, composition: Int, sharpness: Int) -> String {
-        let average = (exposure + composition + sharpness) / 3
-        if average >= 85 { return "优秀" }
-        if average >= 70 { return "良好" }
-        return "需要调整"
     }
 
     private static func directorTitle(scene: String, score: Int) -> String {
@@ -565,4 +589,8 @@ final class FrameAnalyzer: ObservableObject {
         }
         return (0.2126 * Double(pixel[0]) + 0.7152 * Double(pixel[1]) + 0.0722 * Double(pixel[2])) / 255.0
     }
+}
+
+private extension CGRect {
+    var areaValue: CGFloat { isNull ? 0 : max(0, width) * max(0, height) }
 }

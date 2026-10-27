@@ -12,6 +12,7 @@ struct PhotoVersion: Codable, Identifiable, Equatable {
     let sourceAssetID: String?
     let prompt: String?
     let model: String?
+    var outputKey: String? = nil
     var title: String { kind == "seedream" ? "AI修图 · " + createdAt.formatted(date: .omitted, time: .shortened) : "本地成片 · " + createdAt.formatted(date: .omitted, time: .shortened) }
 }
 struct StoredAdvice: Codable, Identifiable, Equatable {
@@ -34,6 +35,7 @@ struct PhotoCloudJob: Codable, Identifiable, Equatable {
     var model: String? = nil
     var resultURL: String? = nil
     var requestID: String? = nil
+    var outputKey: String? = nil
     var state: String // running / completed / failed / interrupted
     var message: String?
     var stateTitle: String {
@@ -74,6 +76,27 @@ enum PhotoImagePreparation {
     static func thumbnail(_ data: Data) throws -> Data {
         guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary) else { throw CloudAPIError.invalidImage }
         return try jpeg(source: source, maximumDimension: 512, quality: 0.82)
+    }
+    /// Encode a still as HEIC (~half the size of JPEG at equal quality) and
+    /// fall back to JPEG on any failure. The caller picks the extension that
+    /// matches the returned bytes so the on-disk name never lies.
+    static func efficientEncode(_ image: UIImage, quality: CGFloat = 0.85) -> (data: Data, ext: String) {
+        if let heic = heic(image, quality: quality) {
+            return (heic, ".heic")
+        }
+        if let jpg = image.jpegData(compressionQuality: min(0.95, max(0.7, quality))) {
+            return (jpg, ".jpg")
+        }
+        return (Data(), ".jpg")
+    }
+    private static func heic(_ image: UIImage, quality: CGFloat) -> Data? {
+        guard let cg = image.cgImage else { return nil }
+        let container = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(container, "public.heic" as CFString, 1, nil) else { return nil }
+        var props: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: quality]
+        props[kCGImagePropertyOrientation] = PhotoPostProcessor.exifOrientation(image.imageOrientation)
+        CGImageDestinationAddImage(dest, cg, props as CFDictionary)
+        return CGImageDestinationFinalize(dest) ? (container as Data) : nil
     }
     private static func jpeg(source: CGImageSource, maximumDimension: Int, quality: CGFloat) throws -> Data {
         let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
@@ -149,7 +172,7 @@ final class AppPhotoStore {
             return result.sorted { $0.capturedAt > $1.capturedAt }
         }
     }
-    func saveCapture(id: UUID, originalData: Data, localData: Data) async throws -> AppPhotoRecord {
+    func saveCapture(id: UUID, originalData: Data, localData: Data, localExtension: String = ".jpg") async throws -> AppPhotoRecord {
         try await run {
             let folder = self.root.appendingPathComponent(id.uuidString, isDirectory: true)
             let exists = FileManager.default.fileExists(atPath: self.fileURL(photoID: id, name: "record.json").path)
@@ -166,7 +189,7 @@ final class AppPhotoStore {
                     record = AppPhotoRecord(id: id, capturedAt: Date(), originalName: "original.data", originalThumbnail: "original-thumb.jpg",
                                             updatedAt: Date(), versions: [], advice: [], jobs: [])
                 }
-                let version = PhotoVersion(id: UUID(), kind: "local", fileName: UUID().uuidString + ".jpg", thumbnailName: UUID().uuidString + "-thumb.jpg",
+                let version = PhotoVersion(id: UUID(), kind: "local", fileName: UUID().uuidString + localExtension, thumbnailName: UUID().uuidString + "-thumb.jpg",
                                            createdAt: Date(), sourceAssetID: "original", prompt: nil, model: nil)
                 for (name, bytes) in [(version.fileName, localData), (version.thumbnailName, try PhotoImagePreparation.thumbnail(localData))] {
                     let url = self.fileURL(photoID: id, name: name)
