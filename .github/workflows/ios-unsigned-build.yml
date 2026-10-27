@@ -93,11 +93,11 @@ jobs:
           xcrun --sdk iphonesimulator swiftc -typecheck -target arm64-apple-ios17.6-simulator \
             "$R/RetouchMaskKit.swift" tests/retouchkit/main.swift
           xcrun --sdk iphonesimulator swiftc -typecheck -target arm64-apple-ios17.6-simulator \
-            "$R/RetouchParameters.swift" "$R/RetouchMaskKit.swift" "$R/AIEditAdvisor.swift" "$R/RetouchStudioModel.swift" tests/batch/main.swift
+            "$R/RetouchParameters.swift" "$R/PresetCatalog.swift" "$R/RetouchMaskKit.swift" "$R/AIEditAdvisor.swift" "$R/RetouchStudioModel.swift" tests/batch/main.swift
           xcrun --sdk iphonesimulator swiftc -typecheck -target arm64-apple-ios17.6-simulator \
-            "$R/RetouchParameters.swift" "$R/RetouchMaskKit.swift" "$R/AIEditAdvisor.swift" "$R/RetouchStudioModel.swift" "$R/RetouchReshape.swift" tests/reshape/main.swift
+            "$R/RetouchParameters.swift" "$R/PresetCatalog.swift" "$R/RetouchMaskKit.swift" "$R/AIEditAdvisor.swift" "$R/RetouchStudioModel.swift" "$R/RetouchReshape.swift" tests/reshape/main.swift
           xcrun --sdk iphonesimulator swiftc -typecheck -target arm64-apple-ios17.6-simulator \
-            "$R/RetouchParameters.swift" "$R/RetouchMaskKit.swift" "$R/AIEditAdvisor.swift" "$R/RetouchStudioModel.swift" "$R/RetouchBackground.swift" tests/background/main.swift
+            "$R/RetouchParameters.swift" "$R/PresetCatalog.swift" "$R/RetouchMaskKit.swift" "$R/AIEditAdvisor.swift" "$R/RetouchStudioModel.swift" "$R/RetouchBackground.swift" tests/background/main.swift
           xcrun swiftc -typecheck "$R/RetouchDelivery.swift" "$R/RetouchProofing.swift" tests/delivery/main.swift
       - name: Static check of the retouch sources
         run: python scripts/check_retouch_sources.py
