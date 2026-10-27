@@ -41,15 +41,14 @@ final class PhotoLibraryService: ObservableObject {
         let exports = UserDefaults.standard.bool(forKey: "exportToSystemAlbum")
         Task {
             do {
-                let data = try await Task.detached(priority: .utility) {
-                    guard let bytes = styledImage.jpegData(compressionQuality: 0.95) else { throw CloudAPIError.invalidImage }
-                    return bytes
+                let encoded = await Task.detached(priority: .utility) {
+                    PhotoImagePreparation.efficientEncode(styledImage, quality: 0.85)
                 }.value
-                let record = try await store.saveCapture(id: id, originalData: originalData, localData: data)
+                let record = try await store.saveCapture(id: id, originalData: originalData, localData: encoded.data, localExtension: encoded.ext)
                 await MainActor.run { self.publish(record); self.lastSaveError = nil; completion?(true) }
                 if exports {
                     do {
-                        try await Self.exportData(keepOriginal ? [originalData, data] : [data])
+                        try await Self.exportData(keepOriginal ? [originalData, encoded.data] : [encoded.data])
                         await MainActor.run { self.lastExportError = nil }
                     } catch {
                         await MainActor.run { self.lastExportError = "图库已保存，系统相册导出失败：" + error.localizedDescription }

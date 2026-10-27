@@ -3,12 +3,14 @@ import SwiftUI
 struct SettingsView: View {
     var isPresentedModally = false
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var analyzer: FrameAnalyzer
+    @EnvironmentObject private var camera: CameraService
     @AppStorage("autoDirector") private var autoDirector = true
     @AppStorage("directorLearning") private var directorLearning = true
     @AppStorage("directorFraming") private var directorFraming = "自动"
     @AppStorage("directorComposition") private var directorComposition = "自动"
+    @AppStorage("quietDirector") private var quietDirector = false
     @AppStorage("showGrid") private var showGrid = true
-    @AppStorage("autoReview") private var autoReview = true
     @AppStorage("autoScene") private var autoScene = true
     @AppStorage("autoFilter") private var autoFilter = true
     @AppStorage("autoComposition") private var autoComposition = true
@@ -16,6 +18,7 @@ struct SettingsView: View {
     @AppStorage("autoCapture") private var autoCapture = true
     @AppStorage("exportToSystemAlbum") private var exportToSystemAlbum = false
     @AppStorage("saveBoth") private var saveBoth = true
+    @AppStorage("directorBlur") private var directorBlur = true
     @AppStorage("portraitDepth") private var portraitDepth = false
     @AppStorage("highQuality") private var highQuality = true
     @AppStorage("manualScene") private var manualScene = "风景"
@@ -31,16 +34,20 @@ struct SettingsView: View {
             Form {
                 Section {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("把画面留给风景").font(.title2.bold())
-                        Text("偏好在这里设置，拍摄时保持专注。")
+                        Text("按你的习惯拍摄").font(.title2.bold()).foregroundStyle(AppTheme.ink)
+                        Text("拍摄行为、画面效果、保存和云端服务集中管理。")
                             .font(.subheadline).foregroundStyle(.secondary)
+                        HStack(spacing: 8) {
+                            Label(autoDirector ? "导演开启" : "导演关闭", systemImage: "viewfinder")
+                            Label(autoFilter ? "滤镜自动" : "滤镜手动", systemImage: "camera.filters")
+                        }.font(.caption).foregroundStyle(AppTheme.muted)
                     }.padding(.vertical, 8)
                 }
                 Section {
                     Toggle("AI导演自动决策", isOn: $autoDirector)
                     Toggle("根据我的反馈调整", isOn: $directorLearning)
                     Picker("取景目标", selection: $directorFraming) {
-                        ForEach(["自动", "环境", "完整人物", "突出主体"], id: \.self) { Text($0).tag($0) }
+                        ForEach(["自动", "环境", "完整人物", "半身", "特写", "合影", "运动", "突出主体"], id: \.self) { Text($0).tag($0) }
                     }
                     Picker("构图偏好", selection: $directorComposition) {
                         ForEach(["自动", "居中", "三分"], id: \.self) { Text($0).tag($0) }
@@ -68,12 +75,19 @@ struct SettingsView: View {
                 Section {
                     Toggle("实时预览效果", isOn: $realtimeEffects)
                     Toggle("自然人像美颜", isOn: $liveBeauty)
+                        .onChange(of: liveBeauty) { _, enabled in
+                            if enabled { realtimeEffects = true; if liveBeautyStrength < 0.01 { liveBeautyStrength = 0.16 } }
+                        }
+                    Text("人像美颜开启时强制启用效果预览；仅在人脸被识别后作用于皮肤。可对准清晰正脸，在0与30%之间对比。")
+                        .font(.caption).foregroundStyle(.secondary)
                     if liveBeauty {
                         Slider(value: $liveBeautyStrength, in: 0...0.30) { Text("磨皮强度") }
                         Text("仅在人脸区域轻柔处理，保护眼唇和纹理；不默认改变脸型。低分辨率预览与原尺寸成片可能有轻微差异。")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Toggle("自动匹配滤镜", isOn: $autoFilter)
+                    Text("关闭自动匹配后可选择鲜艳、电影等滤镜。预览与照片应用同一滤镜；强度为0时不生效。")
+                        .font(.caption).foregroundStyle(.secondary)
                     if !autoFilter {
                         Picker("滤镜", selection: $manualFilterName) {
                             ForEach(PhotoFilter.allCases) { Text($0.rawValue).tag($0.rawValue) }
@@ -89,6 +103,38 @@ struct SettingsView: View {
                 } header: { Text("色彩与风格") } footer: {
                     Text("实时预览与成片共用美颜和调色顺序；预览最高15帧/秒并丢弃积压帧，不降低照片尺寸。滤镜强度为零时不应用调色。")
                 }
+                Section("导演控制") {
+                    Toggle("单人特写实时轻虚化", isOn: $directorBlur)
+                    Text("只用于半身、特写、突出主体。使用本机人物分割保护主体；遮罩异常或过热时关闭虚化。")
+                    Text("人像自动快门要求可见眼部通过开合检查，无法确认时保留手动拍照；运动自动快门额外检查实际曝光时间和主体位移。")
+                }
+                Section("实时诊断") {
+                    LabeledContent("人物数量", value: String(analyzer.directorObservation.personCount))
+                    LabeledContent("眼部估计", value: analyzer.visionEvidence.eyes == "open" ? "睁眼" : analyzer.visionEvidence.eyes == "closed" ? "疑似闭眼" : "未知")
+                    LabeledContent("相机控制", value: camera.controlsSettled ? "已稳定" : "调整中")
+                    Text(camera.exposureText)
+                    Text("位置跟踪与眼部判断在拍摄时更新；打开设置暂停相机，因此这里显示最近一次结果。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Section("导演能力边界") {
+                    Text("自动执行：连续变焦、曝光补偿、对焦/曝光/变焦状态确认与条件快门。普通场景由系统AE控制；运动模式在硬件支持时请求1/500秒并协调ISO，超出范围则限制在硬件范围。物理光圈不可调。")
+                    Text("轻度背景虚化：仅在人像深度采集开启、照片带人物遮罩、单人突出主体时应用；无可靠遮罩保留原景。实时虚化使用人物分割，属于模拟景深。")
+                    Text("跟踪使用位置连续性，不识别人脸身份。眼部开合、嘴部姿态、肩线和手腕边缘由关键点估计；遮挡、眼镜和侧脸可能无法判断。")
+                }
+                Section("滤镜种类") {
+                    Text("41 套，分 7 组：基础 / 人像 / 风景 / 时段 / 胶片 / 黑白 / 艺术。拍摄效果面板按组切换Tab，不再横向滚动全部。")
+                    Text("自然、鲜艳、暖阳、清冷、柔光、清新、人像、奶油人像、净透肤、玫瑰人像、蜜色人像、风景、森系、海洋、山岳、荒漠、天空、日落、金色时刻、蓝调时刻、夜景、极光、胶片、柯达、拍立得、复古、颗粒、黑白、银盐、黑色电影、高反差黑白、电影、霓虹、黑金、马卡龙、紫梦、青橙、褪色、阴郁、暗角、红外")
+                        .font(.caption)
+                    Text("自动模式优先保护肤色和高光；油画/动漫/水彩等强风格化属\"云端风格\"分类，走 Seedream 生成。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Section("色谱 · 各色饱和度") {
+                    ForEach(["red", "orange", "yellow", "green", "cyan", "blue", "purple"], id: \.self) { key in
+                        SpectrumControl(channel: key)
+                    }
+                    Text("橙色主要影响肤色；蓝青影响天空和水面；绿色影响植被。默认0，范围±20，预览和成片共用。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Section("画质与保存") {
                     Toggle("最高照片尺寸", isOn: $highQuality)
                     Toggle("采集人像深度", isOn: $portraitDepth)
@@ -100,12 +146,13 @@ struct SettingsView: View {
                     if exportToSystemAlbum { Toggle("导出时同时保存原片", isOn: $saveBoth) }
                     Text("App图库始终保留原片；本地和AI成片作为不同版本保存。")
                         .font(.caption).foregroundStyle(.secondary)
-                    Toggle("拍完进入复盘", isOn: $autoReview)
+                    Text("拍完留在相机；点击最近照片缩略图进入复盘。")
                 }
                 Section {
                     Toggle("三分网格", isOn: $showGrid)
+                    Toggle("安静导演 · 隐藏文字引导", isOn: $quietDirector)
                 } header: { Text("取景辅助") } footer: {
-                    Text("拍摄页不显示功能开启状态、分析评分或常驻导演提示。")
+                    Text("拍摄页仅显示一句当前指导；安静模式隐藏文字，以构图标记和轻震动提示。")
                 }
                 Section("摄影学院") {
                     LabeledContent("课程", value: "24节 · 7个主题")
@@ -113,7 +160,7 @@ struct SettingsView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("关于与许可") {
-                    LabeledContent("版本", value: "1.1 (build 15)")
+                    LabeledContent("版本", value: "1.1 (build 27)")
                     Text("实时拍摄分析在本机完成；图库中的DeepSeek建议和Seedream修图按需联网调用。")
                     Text("固定光圈机型通过自动快门、ISO和曝光补偿适应光线。本版未实现可变物理光圈控制。")
                         .font(.footnote).foregroundStyle(.secondary)
@@ -131,7 +178,9 @@ struct SettingsView: View {
                         Text(NextLevelDeviceControls.licenseText).font(.caption).textSelection(.enabled)
                     }
                 }
-            }.navigationTitle("拍摄设置")
+            }.scrollContentBackground(.hidden)
+                .background(AppTheme.paper)
+                .navigationTitle("设置")
                 .toolbar {
                     if isPresentedModally {
                         ToolbarItem(placement: .topBarTrailing) { Button("完成") { dismiss() } }
@@ -186,5 +235,23 @@ struct DirectorStatusView: View {
                 }
                 Button("取消", role: .cancel) { }
             } message: { Text("将删除本机积累的取景和滤镜偏好，课程进度与照片不受影响。") }
+    }
+}
+
+private struct SpectrumControl: View {
+    let channel: String
+    @AppStorage private var amount: Double
+    init(channel: String) {
+        self.channel = channel
+        self._amount = AppStorage(wrappedValue: 0, "spectrum_" + channel)
+    }
+    var body: some View {
+        VStack {
+            HStack {
+                Text(["red":"红", "orange":"橙 / 肤色", "yellow":"黄", "green":"绿", "cyan":"青", "blue":"蓝", "purple":"紫"][channel] ?? channel)
+                Spacer(); Text(String(format: "%+.0f", amount)).foregroundStyle(.secondary)
+            }
+            Slider(value: $amount, in: -20...20)
+        }
     }
 }

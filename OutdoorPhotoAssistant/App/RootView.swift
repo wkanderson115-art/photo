@@ -5,19 +5,23 @@ struct RootView: View {
     @State private var selectedTab = 0
     var body: some View {
         TabView(selection: $selectedTab) {
-            CaptureView(isSelected: selectedTab == 0)
+            CaptureView(isSelected: selectedTab == 0, onNavigate: { selectedTab = $0 })
                 .tabItem { Label("拍摄", systemImage: "camera.fill") }
                 .tag(0)
             GalleryView()
                 .tabItem { Label("图库", systemImage: "photo.on.rectangle") }
                 .tag(1)
+            RetouchStudioView()
+                .tabItem { Label("精修台", systemImage: "wand.and.stars") }
+                .tag(4)
             LearningView()
                 .tabItem { Label("学院", systemImage: "book") }
                 .tag(2)
             SettingsView()
                 .tabItem { Label("设置", systemImage: "gearshape") }
                 .tag(3)
-        }.tint(selectedTab == 0 ? AppTheme.mint : AppTheme.ink)
+        }.toolbar(selectedTab == 0 ? .hidden : .visible, for: .tabBar)
+            .tint(selectedTab == 0 ? AppTheme.mint : AppTheme.ink)
             .preferredColorScheme(selectedTab == 0 ? .dark : .light)
     }
 }
@@ -84,7 +88,7 @@ struct LearningView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 16) {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("把每一次拍摄，变成进步").font(.title2.bold())
                         Text("24节实拍课程 · 已完成 \(completedCount) 节")
@@ -109,14 +113,14 @@ struct LearningView: View {
                         Text("摄影规则与反馈偏好；未重新训练视觉模型。评分取自拍摄前预览，仅作参考。")
                             .font(.caption).foregroundStyle(.secondary)
                     }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.mint.opacity(0.10), in: RoundedRectangle(cornerRadius: 22))
+                        .background(AppTheme.soft, in: RoundedRectangle(cornerRadius: 20))
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack {
                             ForEach(categories, id: \.self) { item in
                                 Button { category = item } label: {
                                     Text(item).font(.subheadline.weight(.medium))
                                         .padding(.horizontal, 15).padding(.vertical, 10)
-                                        .background(category == item ? Color.mint.opacity(0.22) : Color(.secondarySystemBackground), in: Capsule())
+                                        .background(category == item ? AppTheme.mint : AppTheme.card, in: Capsule())
                                 }.buttonStyle(.plain)
                             }
                         }
@@ -137,13 +141,13 @@ struct LearningView: View {
                                     Spacer()
                                     Image(systemName: completed.contains("|\(lesson.id)|") ? "checkmark.circle.fill" : "chevron.right")
                                         .foregroundStyle(.mint)
-                                }.padding(18).background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+                                }.padding(18).background(AppTheme.card, in: RoundedRectangle(cornerRadius: 18))
                             }.buttonStyle(.plain)
                         }
                         if filtered.isEmpty { Text("没有匹配课程，试试其他关键词。 ").foregroundStyle(.secondary).padding() }
                     }
-                }.padding(20)
-            }.navigationTitle("摄影学院")
+                }.padding(16)
+            }.background(AppTheme.paper).navigationTitle("摄影学院")
                 .searchable(text: $query, prompt: "搜索逆光、虚化、夜景…")
                 .onAppear { directorFeedbackCount = DirectorPreferenceStore.shared.feedbackCount }
         }
@@ -170,8 +174,8 @@ struct LessonDetailView: View {
                 }.buttonStyle(.borderedProminent).tint(.mint).foregroundStyle(.black)
                 Text("进度保存在本机，完成标记表示你已练习，不代表AI已掌握或验证拍摄效果。")
                     .font(.caption).foregroundStyle(.secondary)
-            }.padding(24)
-        }.navigationBarTitleDisplayMode(.inline)
+            }.padding(16)
+        }.background(AppTheme.paper).navigationBarTitleDisplayMode(.inline)
     }
     private func section(_ title: String, _ text: String, _ icon: String) -> some View {
         VStack(alignment: .leading, spacing: 12) {

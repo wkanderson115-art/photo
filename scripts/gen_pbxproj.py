@@ -15,32 +15,35 @@ OUT = PROJECT_DIR / "project.pbxproj"
 SCHEME = PROJECT_DIR / "xcshareddata" / "xcschemes" / "OutdoorPhotoAssistant.xcscheme"
 
 GROUPS = {
-    "App": ["OutdoorPhotoAssistantApp.swift", "RootView.swift", "AppTheme.swift"],
-    "Core/Camera": ["CameraService.swift", "AdaptiveCameraEngine.swift", "DepthPortraitProcessor.swift"],
+    "App": ["OutdoorPhotoAssistantApp.swift", "RootView.swift", "AppTheme.swift", "OrientationPolicy.swift"],
+    "Core/Camera": ["AdaptiveCameraEngine.swift", "CameraService.swift", "CaptureHandoff.swift", "DepthPortraitProcessor.swift"],
     "Core/Analysis": [
         "FrameAnalyzer.swift",
-        "DirectorEngine.swift",
+        "DirectorEngine.swift", "DirectorVision.swift", "DirectorMLModel.swift",
         "PhotoFilter.swift",
         "ColorGrade.swift",
         "PortraitBeautyEngine.swift",
         "SmartShutterEngine.swift",
         "PhotoPostProcessor.swift",
+        "FrameScoring.swift",
     ],
     "Core/Storage": ["PhotoLibraryService.swift", "AppPhotoStore.swift"],
-    "Core/Cloud": ["CloudAPI.swift", "CloudConfiguration.swift"],
+    "Core/Cloud": ["CloudAPI.swift", "CloudConfiguration.swift", "CloudEscalationPolicy.swift", "RetouchPlanMapper.swift"],
     "Features/Gallery": ["GalleryView.swift"],
+    "Core/CommercialRetouch": ["BlemishLearnedModel.swift", "BlemishModelBridge+Proxy.swift", "BlemishModelBridge.swift", "CommercialQuality.swift", "HybridFusion.swift", "LocalRetouchPreflight.swift", "PresetCatalog.swift", "RetouchAnalyzer.swift", "RetouchBackground.swift", "RetouchBatchRunner.swift", "RetouchDelivery.swift", "RetouchEngine.swift", "RetouchMaskKit.swift", "RetouchParameters.swift", "RetouchPipeline.swift", "RetouchPixelAudit.swift", "RetouchProofing.swift", "RetouchQualityGate.swift", "RetouchRecovery.swift", "RetouchReshape.swift", "RetouchSpecialist.swift", "RetouchStudioModel.swift", "SafeFusion.swift"],
+    "Features/CommercialRetouch": ["CommercialRetouchView.swift", "RetouchStudioView.swift"],
     "Features/Cloud": ["CloudAPISettingsView.swift"],
     "Core/Location": ["LocationService.swift"],
     "Core/Motion": ["MotionService.swift"],
-    "Features/Capture": ["CaptureView.swift", "CompositionOverlay.swift"],
+    "Features/Capture": ["CaptureView.swift", "CaptureLayout.swift", "CompositionOverlay.swift"],
     "Features/Review": ["ReviewView.swift"],
     "Features/Settings": ["SettingsView.swift"],
 }
 
 GROUP_HIERARCHY = {
     "": ["App", "Core", "Features"],
-    "Core": ["Core/Camera", "Core/Analysis", "Core/Storage", "Core/Cloud", "Core/Location", "Core/Motion"],
-    "Features": ["Features/Capture", "Features/Review", "Features/Settings", "Features/Gallery", "Features/Cloud"],
+    "Core": ["Core/Camera", "Core/Analysis", "Core/Storage", "Core/Cloud", "Core/Location", "Core/Motion", "Core/CommercialRetouch"],
+    "Features": ["Features/Capture", "Features/Review", "Features/Settings", "Features/Gallery", "Features/Cloud", "Features/CommercialRetouch"],
 }
 
 BUNDLE_ID = "com.example.outdoorphotoassistant"
@@ -64,7 +67,7 @@ class Ids:
 
 
 def quote(value: str) -> str:
-    if value == "" or any(ch in value for ch in " /:()$"):
+    if value == "" or any(ch in value for ch in " /:()$+"):
         return f'"{value}"'
     return value
 
@@ -196,11 +199,11 @@ def build() -> tuple[str, dict[str, str]]:
         f"path = OutdoorPhotoAssistant; sourceTree = \"<group>\"; }};"
     )
     for parent, children in GROUP_HIERARCHY.items():
-        if parent == "":
-            continue  # Keep the source group with its plist and assets.
+        if not parent:
+            continue  # source_group already defined above; skip to avoid duplicate PBXGroup ID
         child_ids = " ".join(f"{group_ids[child]} /* {child.split('/')[-1]} */," for child in children)
-        parent_path = parent.split("/")[-1] if parent else ""
-        parent_id = source_group if parent == "" else group_ids[parent]
+        parent_path = parent.split("/")[-1]
+        parent_id = group_ids[parent]
         add(
             f"\t\t{parent_id} /* {parent_path} */ = {{isa = PBXGroup; children = ("
             f"{child_ids} ); path = {quote(parent_path)}; sourceTree = \"<group>\"; }};"
@@ -306,7 +309,7 @@ def build() -> tuple[str, dict[str, str]]:
         "ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;",
         "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;",
         "CODE_SIGN_STYLE = Automatic;",
-        "CURRENT_PROJECT_VERSION = 15;",
+        "CURRENT_PROJECT_VERSION = 27;",
         "DEVELOPMENT_TEAM = \"\";",
         "ENABLE_PREVIEWS = YES;",
         "GENERATE_INFOPLIST_FILE = NO;",

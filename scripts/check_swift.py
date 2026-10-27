@@ -33,4 +33,7 @@ for path in files:
         print(f"OK    {path.relative_to(root)}  ({data.count(bytes([10])) + 1} lines)")
 
 print(f"\nfiles={len(files)}  syntax_failures={bad}  total_lines={total_lines}")
+print("note: this is a tree-sitter SYNTAX check only; it verifies bracket balance")
+print("note: and parse structure, NOT undefined symbols or type errors. Run")
+print("note: `xcrun swiftc -typecheck` or xcodebuild for semantic verification.")
 sys.exit(1 if bad else 0)
