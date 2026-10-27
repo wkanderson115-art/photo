@@ -302,6 +302,30 @@ private struct GalleryPhotoDetail: View {
     private var pageTitle: String { stage == "建议" ? "看图建议" : stage == "精修" ? "照片精修" : "这张照片怎么处理" }
     private var adviceReady: Bool { !useDeepSeek || (activeAdvice?.id == adoptedAdviceID && !editPrompt.isEmpty) }
 
+    private func loadReference(_ item: PhotosPickerItem?) async {
+        referenceJPEG = nil
+        referenceError = nil
+        guard let item else { referenceLoading = false; return }
+        referenceLoading = true
+        defer { if referenceItem == item { referenceLoading = false } }
+        do {
+            guard let raw = try await item.loadTransferable(type: Data.self),
+                  let source = CGImageSourceCreateWithData(raw as CFData, nil) else {
+                throw CloudAPIError.invalidImage
+            }
+            let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                                             kCGImageSourceCreateThumbnailWithTransform: true,
+                                             kCGImageSourceThumbnailMaxPixelSize: 1280]
+            guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
+                  let jpeg = UIImage(cgImage: cg).jpegData(compressionQuality: 0.9),
+                  jpeg.count <= 15 * 1024 * 1024 else { throw CloudAPIError.invalidImage }
+            guard !Task.isCancelled, referenceItem == item else { return }
+            referenceJPEG = jpeg
+        } catch {
+            if !Task.isCancelled && referenceItem == item { referenceError = "参考图无法读取，请移除或重新选择。" }
+        }
+    }
+
     var body: some View {
         ScrollView {
             if let record {
@@ -338,18 +362,7 @@ private struct GalleryPhotoDetail: View {
             .sheet(isPresented: $showAdviceRequest) { adviceRequestSheet }
             .sheet(isPresented: $showingOutputSheet) { seedreamOutputSheet }
             .task(id: referenceItem) {
-                referenceJPEG = nil; referenceError = nil
-                guard let item = referenceItem else { referenceLoading = false; return }
-                referenceLoading = true
-                defer { if referenceItem == item { referenceLoading = false } }
-                do {
-                    guard let raw = try await item.loadTransferable(type: Data.self),
-                          let source = CGImageSourceCreateWithData(raw as CFData, nil),
-                          let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: 1280] as CFDictionary),
-                          let jpeg = UIImage(cgImage: cg).jpegData(compressionQuality: 0.9), jpeg.count <= 15 * 1024 * 1024 else { throw CloudAPIError.invalidImage }
-                    guard !Task.isCancelled, referenceItem == item else { return }
-                    referenceJPEG = jpeg
-                } catch { if !Task.isCancelled && referenceItem == item { referenceError = "参考图无法读取，请移除或重新选择。" } }
+                await loadReference(referenceItem)
             }
             .onAppear { if !configured { useDeepSeek = defaultDeepSeekFirst; adviceStandard = "肤色自然；皮肤保留纹理；主体清晰；亮部有层次。"; configured = true } }
             .onChange(of: retouchStyle) { _, value in
