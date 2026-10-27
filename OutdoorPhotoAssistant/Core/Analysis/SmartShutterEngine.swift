@@ -27,7 +27,7 @@ enum SmartShutterEngine {
                                         reason: "手持抖动较大，先稳定机身",
                                         score: max(0, quality - 18))
         }
-        if !isStable && stability < 58 {
+        if !isStable {
             return SmartShutterDecision(action: .wait,
                                         delay: 0.25,
                                         reason: "正在稳定，避免快门瞬间拖影",

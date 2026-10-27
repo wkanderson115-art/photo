@@ -14,3 +14,12 @@ __pycache__/
 # System
 .DS_Store
 Thumbs.db
+
+# Server secrets / durable state
+server/.env
+*.sqlite3*
+*.worker.lock
+.venv/
+
+# Personal model credentials
+**/.env
