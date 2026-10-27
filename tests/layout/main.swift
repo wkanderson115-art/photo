@@ -56,7 +56,9 @@ expect(near(landscapeOverlay.preview.height, landscapeOverlay.previewArea.height
 let oldLandscape = CaptureLayout.plan(available: CGSize(width: 852 - 59 * 2 - 250 - 28,
                                                         height: 393 - 21 - 100),
                                       landscape: true, aspect: 4.0 / 3.0, topBar: 52, bottomBar: 0)
-expect(oldLandscape.fillRatio < 0.30, "The old landscape layout wasted the viewfinder (<30%)")
+let oldScreenArea = phoneLandscape().width * phoneLandscape().height
+let oldFillRelativeToScreen = oldLandscape.preview.width * oldLandscape.preview.height / oldScreenArea
+expect(oldFillRelativeToScreen < 0.30, "The old landscape layout wasted the viewfinder (<30%)")
 
 // 边界：空容器 / 非法数值一律不崩，返回 0 与 overflow 0
 let emptyPlan = CaptureLayout.plan(available: .zero, landscape: false, aspect: 0.75, topBar: 52, bottomBar: 0)

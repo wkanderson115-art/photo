@@ -582,7 +582,7 @@ enum DirectorEngine {
             if score(c) > bestScore + 0.025 { best = c; bestScore = score(c) }
         }
         // 变焦四道闸：上限（数码裁切不算走近）→ 死区 8% → 最短 1.2s → 一阶低通 0.35。
-        let canZoom = abs(o.horizon) < 0.14 && needsChange
+        let canZoom = input.stable && abs(o.horizon) < 0.14 && needsChange
         let commandCeiling = max(lower, min(upper, ceiling))
         let commanded = max(lower, min(commandCeiling, best))
         if canZoom && commanded.isFinite {
