@@ -326,7 +326,7 @@ private struct GalleryPhotoDetail: View {
         }
     }
 
-    var body: some View {
+    private var basePage: some View {
         ScrollView {
             if let record {
                 detailContent(record)
@@ -336,22 +336,41 @@ private struct GalleryPhotoDetail: View {
             .toolbar { NavigationLink { CloudAPISettingsView() } label: { Image(systemName: "key") } }
             .sheet(isPresented: $showAdviceRequest) { adviceRequestSheet }
             .sheet(isPresented: $showingOutputSheet) { seedreamOutputSheet }
+    }
+
+    private var observedPage: some View {
+        basePage
             .task(id: referenceItem) {
                 await loadReference(referenceItem)
             }
-            .onAppear { if !configured { useDeepSeek = defaultDeepSeekFirst; adviceStandard = "肤色自然；皮肤保留纹理；主体清晰；亮部有层次。"; configured = true } }
+            .onAppear(perform: configureIfNeeded)
             .onChange(of: retouchStyle) { _, value in
-                adviceStandard = value == "黑白肖像" ? "黑白灰阶分明；皮肤与衣物分离；亮暗保留细节。" : value == "复古胶片" ? "胶片色彩克制；黑位不蒙灰；颗粒不遮细节；肤色干净。" : value == "夜景人像" ? "保留夜间氛围和彩灯；脸部可辨；不磨平纹理。" : "肤色自然；皮肤保留纹理；主体清晰；亮部有层次。"
+                switch value {
+                case "黑白肖像": adviceStandard = "黑白灰阶分明；皮肤与衣物分离；亮暗保留细节。"
+                case "复古胶片": adviceStandard = "胶片色彩克制；黑位不蒙灰；颗粒不遮细节；肤色干净。"
+                case "夜景人像": adviceStandard = "保留夜间氛围和彩灯；脸部可辨；不磨平纹理。"
+                default: adviceStandard = "肤色自然；皮肤保留纹理；主体清晰；亮部有层次。"
+                }
             }
             .onChange(of: useDeepSeek) { _, enabled in
                 if !enabled && editPrompt.isEmpty { editPrompt = requestText }
             }
+    }
+
+    var body: some View {
+        observedPage
             .onChange(of: sourceID) { _, _ in
                 workflow.clearSelection(); adoptedAdviceID = nil; editPrompt = ""; exportStatus = nil; stage = "选择"; compareResult = false
             }
             .onChange(of: workflow.advice?.id) { _, id in if id != nil { stage = "建议" } }
             .onChange(of: workflow.generatedVersionID) { _, id in if id != nil { stage = "精修"; compareResult = true } }
             .onChange(of: requestText) { _, _ in adoptedAdviceID = nil }
+    }
+    private func configureIfNeeded() {
+        guard !configured else { return }
+        useDeepSeek = defaultDeepSeekFirst
+        adviceStandard = "肤色自然；皮肤保留纹理；主体清晰；亮部有层次。"
+        configured = true
     }
     private func detailContent(_ record: AppPhotoRecord) -> some View {
         VStack(alignment: .leading, spacing: 16) {
