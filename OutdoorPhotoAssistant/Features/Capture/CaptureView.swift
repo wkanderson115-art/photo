@@ -357,7 +357,7 @@ struct CaptureView: View {
         }.frame(maxWidth: .infinity, maxHeight: .infinity).padding(.horizontal, 8)
     }
 
-    var body: some View {
+    private var captureBase: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             GeometryReader { geo in
@@ -415,6 +415,10 @@ struct CaptureView: View {
         .sheet(isPresented: $showingSettings) {
             SettingsView(isPresentedModally: true).preferredColorScheme(.light)
         }
+    }
+
+    private var captureLifecycle: some View {
+        captureBase
         .onAppear {
             guard self.isSelected else { return }
             OrientationPolicy.apply(allowsRotation ? .allButUpsideDown : .portrait)
@@ -465,6 +469,10 @@ struct CaptureView: View {
                 camera.stop()
             } else if isSelected && scenePhase == .active { camera.start() }
         }
+    }
+
+    var body: some View {
+        captureLifecycle
         .onChange(of: camera.photoToken) { _, _ in
             self.processLatestPhoto()
         }
@@ -767,7 +775,7 @@ struct CaptureView: View {
                     Image(systemName: autoPaused || !autoCapture ? "play.circle" : "pause.circle")
                         .font(.system(size: 28)).frame(width: 48, height: 48)
                 }.accessibilityLabel(autoPaused ? "恢复自动拍摄" : "暂停自动拍摄")
-            }.padding(.horizontal, compact ? 10 : 36)
+            }.padding(.horizontal, 36)
         }
         .foregroundStyle(.white)
         .padding(.vertical, 10)
@@ -785,15 +793,16 @@ struct CaptureView: View {
 
         self.activeRenders += 1
 
-        let options = captureOptions ?? currentRenderOptions()
+        var preparedOptions = captureOptions ?? currentRenderOptions()
         captureOptions = nil
         let exposure = analyzer.qualityExposure
         let composition = analyzer.compositionScore
         let sharpness = analyzer.qualitySharpness
         let keepsOriginal = saveBoth
         let depthStrength = min(1, max(0, directorBlurStrength))
-        let useMatteDepth = shot.depthMask != nil && options.directorEvidence.contains { $0.domain == "自动景深" }
-        if useMatteDepth { options.backgroundBlur = 0 }
+        let useMatteDepth = shot.depthMask != nil && preparedOptions.directorEvidence.contains { $0.domain == "自动景深" }
+        if useMatteDepth { preparedOptions.backgroundBlur = 0 }
+        let options = preparedOptions
 
         DispatchQueue.global(qos: .userInitiated).async {
             let rendered = PhotoPostProcessor.render(original: shot.image, options: options)
