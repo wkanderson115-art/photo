@@ -125,6 +125,7 @@ else
   else
     ERROR_COUNT="$(grep -c ': error:' "${TYPE_LOG}" 2>/dev/null || true)"
     echo "类型检查失败，错误行数: ${ERROR_COUNT:-?}（完整日志：${TYPE_LOG}）" >&2
+    grep -n -B 2 -A 6 ': error:' "${TYPE_LOG}" | head -n 160 >&2 || true
     sed -n '1,120p' "${TYPE_LOG}" >&2 || true
     bad "类型检查 app 源码（${APP_FILE_COUNT} 个文件，swiftc -typecheck）"
   fi
