@@ -382,10 +382,9 @@ enum DirectorEngine {
             if o.subjectBrightness > 0.9 && input.scene == "日落" && c > zoom { continue }
             if score(c) > bestScore + 0.025 { best = c; bestScore = score(c) }
         }
-        // Zoom is already protected by confidence, four-sample dwell, cooldown,
-        // edge veto and image-quality checks. Requiring the gyroscope's strict
-        // `isStable` flag here made handheld auto zoom almost impossible to enter.
-        let canZoom = abs(o.horizon) < 0.14 && needsChange
+        // Wait for stable framing before moving the lens; the controller also
+        // requires repeated observations before issuing a hardware command.
+        let canZoom = input.stable && abs(o.horizon) < 0.14 && needsChange
         decision.targetZoom = canZoom ? best : max(lower, min(upper, zoom))
         decision.shouldZoom = canZoom && abs(log(decision.targetZoom / zoom)) > 0.045
         let action = decision.shouldZoom ? (best > zoom ? "小幅推近，达到主体占比" : "小幅拉远，保留人物和留白") : "保持当前倍率"
