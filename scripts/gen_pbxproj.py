@@ -67,7 +67,7 @@ class Ids:
 
 
 def quote(value: str) -> str:
-    if value == "" or any(ch in value for ch in " /:()$"):
+    if value == "" or any(ch in value for ch in " /:()$+"):
         return f'"{value}"'
     return value
 

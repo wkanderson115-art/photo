@@ -97,7 +97,7 @@
 		F00000000000000000000024 /* RetouchPlanMapper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RetouchPlanMapper.swift; sourceTree = "<group>"; };
 		F00000000000000000000025 /* GalleryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GalleryView.swift; sourceTree = "<group>"; };
 		F00000000000000000000026 /* BlemishLearnedModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlemishLearnedModel.swift; sourceTree = "<group>"; };
-		F00000000000000000000027 /* BlemishModelBridge+Proxy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlemishModelBridge+Proxy.swift; sourceTree = "<group>"; };
+		F00000000000000000000027 /* BlemishModelBridge+Proxy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BlemishModelBridge+Proxy.swift"; sourceTree = "<group>"; };
 		F00000000000000000000028 /* BlemishModelBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlemishModelBridge.swift; sourceTree = "<group>"; };
 		F00000000000000000000029 /* CommercialQuality.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommercialQuality.swift; sourceTree = "<group>"; };
 		F00000000000000000000030 /* HybridFusion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HybridFusion.swift; sourceTree = "<group>"; };
