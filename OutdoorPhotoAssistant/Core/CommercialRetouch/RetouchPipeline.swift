@@ -118,6 +118,7 @@ final class RetouchPipeline {
         // 截图必须走 document 口径并且不套风格 Look —— 实测套了调色 SSIM 会从 0.999 掉到 0.914，
         // 直接撞破 document 的 0.92 下限；清晰度也要关掉，UI 文字与边框加锐化只会被放大成白边。
         let screenshot = ScreenshotDetector.inspect(input, context: context)
+        let treatAsScreenshot = screenshot.isScreenshot
         if treatAsScreenshot {
             parameters.applyLook = false
             parameters.clarityAmount = 0
