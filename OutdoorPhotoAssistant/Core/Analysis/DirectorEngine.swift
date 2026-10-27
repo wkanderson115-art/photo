@@ -526,7 +526,10 @@ enum DirectorEngine {
         }
         var desired: Double
         if o.subjectKind == "face" {
-            desired = input.framing == "特写" ? 0.45 : 0.30
+            // A detected face is only part of a person. In automatic/full-body
+            // framing, leave space for the body instead of treating face height
+            // as the desired subject height.
+            desired = input.framing == "特写" ? 0.45 : input.framing == "半身" || input.framing == "突出主体" ? 0.30 : 0.22
         } else {
             switch input.framing {
             case "环境": desired = 0.42

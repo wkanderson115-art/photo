@@ -29,6 +29,11 @@ struct FrameScoring {
         let midY = Double(subject.rect.midY)
         let spatial = DirectorCropImportance.score(x: midX, y: midY, ruleOfThirds: true)
         score += 40 * min(1, max(0, spatial / 1.41))
+        let thirdLines = [1.0 / 3.0, 2.0 / 3.0]
+        let nearestThird = thirdLines.flatMap { x in
+            thirdLines.map { y in hypot(midX - x, midY - y) }
+        }.min() ?? 1
+        score += 20 * max(0, 1 - nearestThird / 0.25)
 
         let inset = Double(min(subject.rect.minX,
                                subject.rect.minY,
