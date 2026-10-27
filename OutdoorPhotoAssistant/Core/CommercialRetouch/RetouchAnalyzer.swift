@@ -98,7 +98,7 @@ final class RetouchAnalyzer {
                 if pr <= 0 { continue }
                 let cb = ycc.cb[x, y] * 255, cr = ycc.cr[x, y] * 255, yy = ycc.y[x, y] * 255
                 let inWindow = cb > 76 && cb < 128 && cr > 132 && cr < 174 && yy > 40 && yy < 246
-                var v = inWindow ? 0.6 : 0.0
+                var v: Float = inWindow ? 0.6 : 0.0
                 let dl = (lab.l[x, y] - labMedian.x) / 42.0
                 let da = (lab.a[x, y] - labMedian.y) / 13.0
                 let db = (lab.b[x, y] - labMedian.z) / 17.0
