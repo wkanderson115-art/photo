@@ -329,7 +329,32 @@ private struct GalleryPhotoDetail: View {
     var body: some View {
         ScrollView {
             if let record {
-                VStack(alignment: .leading, spacing: 16) {
+                detailContent(record)
+            } else { ContentUnavailableView("照片暂不可用", systemImage: "photo") }
+        }.background(AppTheme.paper).navigationTitle(pageTitle)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { NavigationLink { CloudAPISettingsView() } label: { Image(systemName: "key") } }
+            .sheet(isPresented: $showAdviceRequest) { adviceRequestSheet }
+            .sheet(isPresented: $showingOutputSheet) { seedreamOutputSheet }
+            .task(id: referenceItem) {
+                await loadReference(referenceItem)
+            }
+            .onAppear { if !configured { useDeepSeek = defaultDeepSeekFirst; adviceStandard = "肤色自然；皮肤保留纹理；主体清晰；亮部有层次。"; configured = true } }
+            .onChange(of: retouchStyle) { _, value in
+                adviceStandard = value == "黑白肖像" ? "黑白灰阶分明；皮肤与衣物分离；亮暗保留细节。" : value == "复古胶片" ? "胶片色彩克制；黑位不蒙灰；颗粒不遮细节；肤色干净。" : value == "夜景人像" ? "保留夜间氛围和彩灯；脸部可辨；不磨平纹理。" : "肤色自然；皮肤保留纹理；主体清晰；亮部有层次。"
+            }
+            .onChange(of: useDeepSeek) { _, enabled in
+                if !enabled && editPrompt.isEmpty { editPrompt = requestText }
+            }
+            .onChange(of: sourceID) { _, _ in
+                workflow.clearSelection(); adoptedAdviceID = nil; editPrompt = ""; exportStatus = nil; stage = "选择"; compareResult = false
+            }
+            .onChange(of: workflow.advice?.id) { _, id in if id != nil { stage = "建议" } }
+            .onChange(of: workflow.generatedVersionID) { _, id in if id != nil { stage = "精修"; compareResult = true } }
+            .onChange(of: requestText) { _, _ in adoptedAdviceID = nil }
+    }
+    private func detailContent(_ record: AppPhotoRecord) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
                     Text(stage == "建议" ? "第一步 · 看图建议" : stage == "精修" ? "第二步 · 确认精修" : "选择照片版本")
                         .font(.headline).foregroundStyle(AppTheme.ink)
                     Text(stage == "建议" ? "看完建议再决定是否生成成片" : stage == "精修" ? "确认修图要求后才会发起处理" : "选择要查看或处理的版本")
@@ -355,28 +380,6 @@ private struct GalleryPhotoDetail: View {
                     }.buttonStyle(.bordered).disabled(isBusy)
                     if let exportStatus { Text(exportStatus).font(.footnote).foregroundStyle(.secondary) }
                 }.padding(16)
-            } else { ContentUnavailableView("照片暂不可用", systemImage: "photo") }
-        }.background(AppTheme.paper).navigationTitle(pageTitle)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { NavigationLink { CloudAPISettingsView() } label: { Image(systemName: "key") } }
-            .sheet(isPresented: $showAdviceRequest) { adviceRequestSheet }
-            .sheet(isPresented: $showingOutputSheet) { seedreamOutputSheet }
-            .task(id: referenceItem) {
-                await loadReference(referenceItem)
-            }
-            .onAppear { if !configured { useDeepSeek = defaultDeepSeekFirst; adviceStandard = "肤色自然；皮肤保留纹理；主体清晰；亮部有层次。"; configured = true } }
-            .onChange(of: retouchStyle) { _, value in
-                adviceStandard = value == "黑白肖像" ? "黑白灰阶分明；皮肤与衣物分离；亮暗保留细节。" : value == "复古胶片" ? "胶片色彩克制；黑位不蒙灰；颗粒不遮细节；肤色干净。" : value == "夜景人像" ? "保留夜间氛围和彩灯；脸部可辨；不磨平纹理。" : "肤色自然；皮肤保留纹理；主体清晰；亮部有层次。"
-            }
-            .onChange(of: useDeepSeek) { _, enabled in
-                if !enabled && editPrompt.isEmpty { editPrompt = requestText }
-            }
-            .onChange(of: sourceID) { _, _ in
-                workflow.clearSelection(); adoptedAdviceID = nil; editPrompt = ""; exportStatus = nil; stage = "选择"; compareResult = false
-            }
-            .onChange(of: workflow.advice?.id) { _, id in if id != nil { stage = "建议" } }
-            .onChange(of: workflow.generatedVersionID) { _, id in if id != nil { stage = "精修"; compareResult = true } }
-            .onChange(of: requestText) { _, _ in adoptedAdviceID = nil }
     }
     private func versionPicker(_ record: AppPhotoRecord) -> some View {
         VStack(alignment: .leading, spacing: 8) {
