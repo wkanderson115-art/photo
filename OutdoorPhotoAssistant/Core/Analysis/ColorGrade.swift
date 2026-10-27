@@ -35,6 +35,9 @@ struct ColorGrade: Equatable {
     var purpleHue: Double = 0
     var purpleSat: Double = 0
     var purpleLum: Double = 0
+    var curveShadow: Double = 0
+    var curveMid: Double = 0
+    var curveHighlight: Double = 0
 
     /// 场景 + 光线 + 时段 → 调色参数。
     /// period 传入 "日间" / "黄金时段" / "蓝调时刻" / "夜景" 时才会生效（上一版恒传空串，导致时段调色永远不触发）。
@@ -140,6 +143,8 @@ struct ColorGrade: Equatable {
             g.contrast += 0.04
             g.saturation *= 0.94
             g.vignette += 0.10
+            g.curveShadow -= 0.06
+            g.curveHighlight -= 0.05
         case "主体":
             g.clarity += 0.04
             g.shadows += 3
@@ -188,6 +193,10 @@ enum ColorGradeEngine {
             current = applyCube(grade, to: current)
         }
 
+        if hasToneCurve(grade) {
+            current = applyToneCurve(grade, to: current)
+        }
+
         if grade.clarity > 0.01 {
             let sharp = CIFilter.sharpenLuminance()
             sharp.inputImage = current
@@ -210,7 +219,26 @@ enum ColorGradeEngine {
     private static func hasSelective(_ g: ColorGrade) -> Bool {
         let sats = [g.redSat, g.orangeSat, g.yellowSat, g.greenSat, g.cyanSat, g.blueSat, g.purpleSat]
         let hues = [g.redHue, g.orangeHue, g.yellowHue, g.greenHue, g.cyanHue, g.blueHue, g.purpleHue]
-        return sats.contains { abs($0) > 0.1 } || hues.contains { abs($0) > 0.1 }
+        let lums = [g.redLum, g.orangeLum, g.yellowLum, g.greenLum, g.cyanLum, g.blueLum, g.purpleLum]
+        return sats.contains { abs($0) > 0.1 } || hues.contains { abs($0) > 0.1 } || lums.contains { abs($0) > 0.1 }
+    }
+
+    private static func hasToneCurve(_ g: ColorGrade) -> Bool {
+        abs(g.curveShadow) > 0.005 || abs(g.curveMid) > 0.005 || abs(g.curveHighlight) > 0.005
+    }
+
+    private static func applyToneCurve(_ g: ColorGrade, to image: CIImage) -> CIImage {
+        let s = min(max(0.25 + g.curveShadow * 0.24, 0.02), 0.48)
+        let m = min(max(0.50 + g.curveMid * 0.30, s + 0.01), 0.98)
+        let h = min(max(0.75 + g.curveHighlight * 0.24, m + 0.01), 0.98)
+        guard let filter = CIFilter(name: "CIToneCurve") else { return image }
+        filter.setValue(image, forKey: kCIInputImageKey)
+        filter.setValue(CIVector(x: 0, y: 0), forKey: "inputPoint0")
+        filter.setValue(CIVector(x: 0.25, y: CGFloat(s)), forKey: "inputPoint1")
+        filter.setValue(CIVector(x: 0.5, y: CGFloat(m)), forKey: "inputPoint2")
+        filter.setValue(CIVector(x: 0.75, y: CGFloat(h)), forKey: "inputPoint3")
+        filter.setValue(CIVector(x: 1, y: 1), forKey: "inputPoint4")
+        return (filter.outputImage ?? image).cropped(to: image.extent)
     }
 
     private static func applyCube(_ grade: ColorGrade, to image: CIImage) -> CIImage {

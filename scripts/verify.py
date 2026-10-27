@@ -96,7 +96,7 @@ source_paths = sorted(str(refs_by_id[rid].path) for rid in source_ref_ids)
 # file refs are relative to their group; group paths are the parent dirs. Compare basenames + count.
 source_basenames = sorted(pathlib.PurePosixPath(p).name for p in source_paths)
 disk_basenames = sorted(pathlib.PurePosixPath(p).name for p in disk_swift)
-check(len(disk_swift) == 18, f"18 Swift files on disk (got {len(disk_swift)})")
+check(len(disk_swift) >= 27, f"at least 27 Swift files on disk (got {len(disk_swift)})")
 check(source_basenames == disk_basenames, "Sources phase matches Swift files on disk")
 
 print("== 3. resources ==")
@@ -131,7 +131,9 @@ for key in [
     "UISupportedInterfaceOrientations",
 ]:
     check(key in info, f"Info.plist has {key}")
-check(info.get("UISupportedInterfaceOrientations") == ["UIInterfaceOrientationPortrait"], "portrait-locked")
+check(set(info.get("UISupportedInterfaceOrientations", [])) == {
+    "UIInterfaceOrientationPortrait", "UIInterfaceOrientationLandscapeLeft",
+    "UIInterfaceOrientationLandscapeRight"}, "portrait and landscape camera orientations")
 
 privacy = plistlib.loads((APP / "PrivacyInfo.xcprivacy").read_bytes())
 api_types = privacy.get("NSPrivacyAccessedAPITypes", [])
@@ -197,12 +199,29 @@ forbidden = {
     "supportsExposureModeCustom(lensAperture": "iOS 27 API",
     "isAppleProRAWSupported": "removed feature (was broken)",
     "AVCaptureSystemZoomSlider": "dropped for first-compile safety",
-    "AVCaptureEventInteraction": "dropped for first-compile safety",
     "lowLightBoostSupported": "typo API (should be isLowLightBoostSupported)",
 }
 all_swift = "\n".join(p.read_text(encoding="utf-8") for p in APP.rglob("*.swift"))
 for token, reason in forbidden.items():
     check(token not in all_swift, f"absent: {token} ({reason})")
+
+# 硬件快门：AVCaptureEventInteraction 是 iOS 17.2 的 AVKit API，之前为了首编安全整段删掉。
+# 现在不是一票否决，而是「必须带正确保护」才放行：
+#   * 必须 import AVKit（或 canImport(AVKit)），否则类型都找不到；
+#   * 必须有 iOS 17.2 的可用性保护，否则低版本/旧 SDK 编译直接炸；
+#   * 只允许出现在相机预览层里（其它位置出现说明用法跑偏了）。
+shutter_file = APP / "Core" / "Camera" / "CameraService.swift"
+shutter_text = shutter_file.read_text(encoding="utf-8") if shutter_file.exists() else ""
+if "AVCaptureEventInteraction" in shutter_text:
+    check("import AVKit" in shutter_text or "canImport(AVKit)" in shutter_text,
+          "AVCaptureEventInteraction requires import AVKit")
+    check("#available(iOS 17.2" in shutter_text,
+          "AVCaptureEventInteraction guarded by #available(iOS 17.2)")
+    for other in APP.rglob("*.swift"):
+        if other.name == shutter_file.name:
+            continue
+        if "AVCaptureEventInteraction" in other.read_text(encoding="utf-8"):
+            check(False, f"AVCaptureEventInteraction must live only in CameraService, also found in {other.name}")
 
 aesthetic_file = (APP / "Core" / "Analysis" / "FrameAnalyzer.swift").read_text(encoding="utf-8")
 check('if #available(iOS 18.0, *)' in aesthetic_file, "aesthetics request guarded by #available(iOS 18.0)")
