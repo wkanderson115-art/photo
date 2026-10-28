@@ -3,7 +3,7 @@ name: iOS Build (unsigned IPA)
 on:
   workflow_dispatch:
   push:
-    branches: [main, work]
+    branches: [main, work, figma-final-landscape4x3]
   pull_request:
 
 permissions:
