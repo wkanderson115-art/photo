@@ -10,6 +10,29 @@ struct CapturedPhoto {
     let depthPortrait: UIImage?
     let depthMask: UIImage?
     let capturedAt: Date
+
+    /// Display dimensions after applying the photo's EXIF orientation.  The raw
+    /// sensor pixels may still be stored portrait-first, so `cgImage.width` alone
+    /// cannot decide whether this was a horizontal photo.
+    var displayPixelSize: CGSize {
+        let raw = image.cgImage.map {
+            CGSize(width: CGFloat($0.width), height: CGFloat($0.height))
+        } ?? image.size
+        switch image.imageOrientation {
+        case .left, .right, .leftMirrored, .rightMirrored:
+            return CGSize(width: raw.height, height: raw.width)
+        default:
+            return raw
+        }
+    }
+
+    var displayAspect: CGFloat {
+        let size = displayPixelSize
+        guard size.width > 0, size.height > 0 else { return 1 }
+        return size.width / size.height
+    }
+
+    var isLandscape: Bool { displayAspect > 1 }
 }
 
 /// 相机服务。
@@ -44,6 +67,7 @@ final class CameraService: NSObject, ObservableObject {
     private var wantsRunning = false // Access only on sessionQueue.
     private var rotationCoordinator: AVCaptureDevice.RotationCoordinator? // Access only on sessionQueue.
     private var rotationObservation: NSKeyValueObservation?
+    private var lastStableRotationAngle: CGFloat = 90 // Access only on sessionQueue.
     private var requestedHighQuality = true
     private var directorOwnsExposure = false
     private var lastMotionExposureUpdate = Date.distantPast
@@ -90,6 +114,11 @@ final class CameraService: NSObject, ObservableObject {
     /// Rotation (degrees) that makes the preview, analysis frames and photos upright for the way the
     /// phone is held right now. 90 = portrait on the rear camera, 0 / 180 = the two landscapes.
     @Published private(set) var previewRotationAngle: CGFloat = 90
+    @Published private(set) var orientationLabel = "竖拍 3:4"
+
+    var isLandscapeCapture: Bool {
+        CaptureLayout.isLandscape(rotationAngle: previewRotationAngle)
+    }
 
     override init() {
         super.init()
@@ -104,6 +133,7 @@ final class CameraService: NSObject, ObservableObject {
         zoomRangeObservations.forEach { $0.invalidate() }
         zoomRangeObservations.removeAll()
         zoomObservation?.invalidate()
+        rotationObservation?.invalidate()
         videoOutput.setSampleBufferDelegate(nil, queue: nil)
     }
 
@@ -265,22 +295,45 @@ final class CameraService: NSObject, ObservableObject {
     /// Follows the physical orientation of the phone, so portrait and landscape shots are both upright.
     /// `videoRotationAngleForHorizonLevelCapture` also accounts for the front camera.
     private var currentRotationAngle: CGFloat {
-        rotationCoordinator?.videoRotationAngleForHorizonLevelCapture ?? 90
+        if let angle = rotationCoordinator?.videoRotationAngleForHorizonLevelCapture {
+            return CaptureLayout.normalizedRotationAngle(angle)
+        }
+        // RotationCoordinator is available on the deployment target, but retain a
+        // device-orientation fallback for the short interval while cameras switch.
+        let fallback: CGFloat
+        switch UIDevice.current.orientation {
+        case .landscapeLeft: fallback = 0
+        case .landscapeRight: fallback = 180
+        case .portraitUpsideDown: fallback = 270
+        case .portrait: fallback = 90
+        default: fallback = lastStableRotationAngle
+        }
+        return CaptureLayout.normalizedRotationAngle(fallback)
     }
 
     private func installRotationCoordinator(for device: AVCaptureDevice) {
         rotationObservation?.invalidate()
         let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
         rotationCoordinator = coordinator
-        rotationObservation = coordinator.observe(\.videoRotationAngleForHorizonLevelCapture, options: [.new]) { [weak self] _, _ in
+        rotationObservation = coordinator.observe(\.videoRotationAngleForHorizonLevelCapture, options: [.initial, .new]) { [weak self] _, _ in
             self?.sessionQueue.async { self?.configureConnections() }
         }
     }
 
     private func configureConnections() {
         let angle = currentRotationAngle
+        lastStableRotationAngle = angle
         func rotate(_ connection: AVCaptureConnection) {
-            if connection.isVideoRotationAngleSupported(angle) { connection.videoRotationAngle = angle }
+            if connection.isVideoRotationAngleSupported(angle) {
+                connection.videoRotationAngle = angle
+            } else if connection.isVideoOrientationSupported {
+                switch angle {
+                case 0: connection.videoOrientation = .landscapeRight
+                case 180: connection.videoOrientation = .landscapeLeft
+                case 270: connection.videoOrientation = .portraitUpsideDown
+                default: connection.videoOrientation = .portrait
+                }
+            }
         }
         if let photoConnection = photoOutput.connection(with: .video) {
             rotate(photoConnection)
@@ -293,8 +346,9 @@ final class CameraService: NSObject, ObservableObject {
             if videoConnection.isVideoMirroringSupported { videoConnection.automaticallyAdjustsVideoMirroring = false; videoConnection.isVideoMirrored = false }
         }
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.previewRotationAngle != angle else { return }
-            self.previewRotationAngle = angle
+            guard let self else { return }
+            if self.previewRotationAngle != angle { self.previewRotationAngle = angle }
+            self.orientationLabel = CaptureLayout.isLandscape(rotationAngle: angle) ? "横拍 4:3" : "竖拍 3:4"
         }
     }
 
@@ -325,7 +379,10 @@ final class CameraService: NSObject, ObservableObject {
             session.addInput(previousInput)
             input = previousInput
             currentDevice = previousDevice
-            if let previousDevice { observeZoom(previousDevice) }
+            if let previousDevice {
+                installRotationCoordinator(for: previousDevice)
+                observeZoom(previousDevice)
+            }
         }
         return false
     }

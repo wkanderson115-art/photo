@@ -84,6 +84,9 @@ struct CaptureView: View {
 
     private var previewAspect: CGFloat { CaptureLayout.previewAspect(frameAspect: analyzer.frameAspectRatio, landscape: false) }
     private var landscapePreviewAspect: CGFloat { CaptureLayout.previewAspect(frameAspect: analyzer.frameAspectRatio, landscape: true) }
+    private var activeCaptureAspect: CGFloat {
+        CaptureLayout.photoAspect(landscape: camera.isLandscapeCapture)
+    }
     /// Only the camera itself may rotate; settings and review stay portrait.
     private var allowsRotation: Bool { isSelected && !showReview && !showingSettings }
     private var effectiveScene: String { autoScene ? analyzer.detectedScene : manualScene }
@@ -344,6 +347,16 @@ struct CaptureView: View {
                 topBar
                 Spacer(minLength: 0)
                 previewView(width: size.width, height: size.height)
+                    .overlay(alignment: .topLeading) {
+                        Label("横拍 4:3 · 成片宽于高", systemImage: "rectangle.landscape")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(.black.opacity(0.58), in: Capsule())
+                            .padding(10)
+                            .allowsHitTesting(false)
+                    }
                 Spacer(minLength: 0)
             }.frame(maxWidth: .infinity)
             ScrollView(.vertical, showsIndicators: false) {
@@ -795,6 +808,13 @@ struct CaptureView: View {
 
         var preparedOptions = captureOptions ?? currentRenderOptions()
         captureOptions = nil
+        // The output must follow the actual captured photo, not the UI geometry
+        // from a frame just before rotation.  This is the fix that prevents a
+        // horizontal original from being cropped back to a 3:4 local version.
+        let capturedAspect = Double(shot.displayAspect)
+        if capturedAspect.isFinite, capturedAspect > 0 {
+            preparedOptions.outputAspect = min(2, max(0.5, capturedAspect))
+        }
         let exposure = analyzer.qualityExposure
         let composition = analyzer.compositionScore
         let sharpness = analyzer.qualitySharpness
@@ -844,7 +864,7 @@ struct CaptureView: View {
                               styledImage: styled,
                               keepOriginal: keepsOriginal, photoID: shot.id) { success in
             if success {
-                self.showToast("已保存到图库")
+                self.showToast(shot.isLandscape ? "横拍 4:3 已保存到图库" : "竖拍 3:4 已保存到图库")
             } else {
                 self.showToast("保存失败：\(self.library.lastSaveError ?? "未知错误")")
             }
@@ -870,7 +890,7 @@ struct CaptureView: View {
     private func currentRenderOptions() -> PhotoRenderOptions {
         PhotoRenderOptions(filter: effectiveFilter, grade: effectiveGrade,
                            style: compositionStyle, beauty: liveBeauty ? BeautyPreset(intensity: liveBeautyStrength).settings(mode: liveBeautyMode) : nil,
-                           outputAspect: Double(previewAspect),
+                           outputAspect: Double(activeCaptureAspect),
                            filterStrength: autoDirector && autoFilter ? min(filterStrength, analyzer.directorDecision.maximumFilterStrength) : filterStrength,
                            backgroundBlur: directorBlur && autoDirector && analyzer.directorObservation.personCount == 1 && ["半身", "特写", "突出主体"].contains(directorFraming) ? directorBlurStrength : 0,
                            directorContext: autoDirector ? analyzer.directorDecision.context : nil,
@@ -885,6 +905,7 @@ struct CaptureView: View {
             options.directorEvidence.append(DirectorEvidence(domain: "自动景深", rule: "单人突出主体", observation: "请求轻度背景分离", action: "仅当成片存在人物遮罩时轻度虚化；缺少遮罩时保留原景"))
         }
         options.directorEvidence.append(DirectorEvidence(domain: "设备执行", rule: "实际控制状态", observation: camera.exposureText + String(format: " · %.2f×", Double(camera.zoom)), action: camera.controlsSettled ? "系统对焦、曝光与变焦已稳定" : "本次为手动快门或控制尚未稳定"))
+        options.directorEvidence.append(DirectorEvidence(domain: "画幅方向", rule: "照片随设备方向输出", observation: camera.orientationLabel, action: camera.isLandscapeCapture ? "保存横向 4:3 成片（宽大于高）" : "保存竖向 3:4 成片（高大于宽）"))
         captureOptions = options
         camera.capture()
     }
