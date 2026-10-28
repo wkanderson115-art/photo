@@ -454,18 +454,19 @@ enum DirectorEngine {
             }
         }
         if o.saturation > 0.48 || (person && o.warmth > 0.14) { decision.filter = "自然" }
-        if let preference = input.preference, preference.filterSamples >= 3 {
+        let hasApprovedFilterPreference = (input.preference?.filterSamples ?? 0) >= 3
+        if let preference = input.preference, hasApprovedFilterPreference {
             // Apply the user's context-specific choices, bounded by present image quality.
             decision.filter = preference.preferredFilter
             decision.maximumFilterStrength = max(0.15, min(0.8, preference.filterStrength))
         }
         if person { decision.maximumFilterStrength = min(0.5, decision.maximumFilterStrength) }
         if o.saturation > 0.48 || decision.protectHighlights { decision.maximumFilterStrength = min(0.4, decision.maximumFilterStrength) }
-        if person && (input.preference?.filterSamples ?? 0) < 3 {
+        if person && !hasApprovedFilterPreference {
             decision.filter = o.brightness < 0.20 || o.warmth > 0.14 || o.saturation > 0.48 ? "自然" : "人像"
-        } else if o.brightness < 0.16 {
+        } else if !hasApprovedFilterPreference && o.brightness < 0.16 {
             decision.filter = "自然"
-        } else if o.saturation < 0.12 {
+        } else if !hasApprovedFilterPreference && o.saturation < 0.12 {
             decision.filter = "自然" // Neutral scenes must not be artificially colored.
         }
         let lightState = o.brightness < 0.20 ? "暗光" : o.brightness > 0.80 ? "明亮场景" : "正常亮度"
