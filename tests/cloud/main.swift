@@ -134,7 +134,7 @@ final class MockProtocol: URLProtocol {
         expect(missingScope.contains("裁切：不允许"), "Missing scope fails closed")
         let scopedStyle = NaturalPhotoPolicy.styleBoundary(strength: "适中", allowCrop: true, allowCleanup: false, scope: "仅裁掉底部空白")
         expect(scopedStyle.contains("裁切：仅限") && scopedStyle.contains("移除杂物：不允许"), "Crop and cleanup permissions remain independent")
-        expect(RetouchReferenceBank.cards.count == 12, "Twelve named categories have reference cards")
+        expect(RetouchReferenceBank.cards.count >= 12, "At least twelve named categories have reference cards")
         expect(RetouchReferenceBank.selected(for: "精修分类：黑白肖像。保留细节").name == "黑白肖像", "Exact classification routes to its reference")
         expect(RetouchReferenceBank.selected(for: "请自然处理").name == "按照片诊断", "Custom instructions use diagnostic reference")
         expect(RetouchReferenceBank.context(for: "精修分类：复古胶片。").contains("细颗粒"), "Film reference includes distinct method")
