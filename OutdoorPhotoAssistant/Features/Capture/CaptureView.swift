@@ -1280,32 +1280,34 @@ struct CaptureView: View {
         let useMatteDepth = shot.depthMask != nil && options.directorEvidence.contains { $0.domain == "自动景深" }
         if useMatteDepth { options.backgroundBlur = 0 }
 
-        enqueueRender(shot: shot,
-                      options: options,
-                      useMatteDepth: useMatteDepth,
-                      depthStrength: depthStrength,
-                      exposure: exposure,
-                      composition: composition,
-                      sharpness: sharpness,
-                      keepsOriginal: keepsOriginal)
+        enqueueRender(PendingRender(shot: shot, options: options,
+                                    useMatteDepth: useMatteDepth, depthStrength: depthStrength,
+                                    exposure: exposure, composition: composition,
+                                    sharpness: sharpness, keepsOriginal: keepsOriginal))
     }
 
-    private func enqueueRender(shot: CapturedPhoto,
-                               options: PhotoRenderOptions,
-                               useMatteDepth: Bool,
-                               depthStrength: CGFloat,
-                               exposure: Int,
-                               composition: Int,
-                               sharpness: Int,
-                               keepsOriginal: Bool) {
-        DispatchQueue.global(qos: .userInitiated).async { [self] in
-            let styled = render(shot: shot, options: options,
-                                useMatteDepth: useMatteDepth, depthStrength: depthStrength)
-            let score = Int((Double(composition) * 0.45 + Double(exposure) * 0.25 + Double(sharpness) * 0.30).rounded())
-            DispatchQueue.main.async { [self] in
-                completeRender(shot: shot, styled: styled, score: score,
-                               options: options, keepsOriginal: keepsOriginal)
-            }
+    private struct PendingRender {
+        let shot: CapturedPhoto
+        let options: PhotoRenderOptions
+        let useMatteDepth: Bool
+        let depthStrength: CGFloat
+        let exposure: Int
+        let composition: Int
+        let sharpness: Int
+        let keepsOriginal: Bool
+        var score: Int {
+            Int((Double(composition) * 0.45 + Double(exposure) * 0.25 + Double(sharpness) * 0.30).rounded())
+        }
+    }
+
+    private func enqueueRender(_ task: PendingRender) {
+        let completion: (UIImage?) -> Void = { [self, task] styled in
+            completeRender(shot: task.shot, styled: styled, score: task.score,
+                           options: task.options, keepsOriginal: task.keepsOriginal)
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let styled = Self.render(task: task)
+            DispatchQueue.main.async { completion(styled) }
         }
     }
 
@@ -1316,13 +1318,10 @@ struct CaptureView: View {
         finish(shot: shot, styled: styled, score: score, options: options, keepsOriginal: keepsOriginal)
     }
 
-    private func render(shot: CapturedPhoto,
-                        options: PhotoRenderOptions,
-                        useMatteDepth: Bool,
-                        depthStrength: CGFloat) -> UIImage? {
-        guard let rendered = PhotoPostProcessor.render(original: shot.image, options: options) else { return nil }
-        guard useMatteDepth else { return rendered }
-        return DepthPortraitProcessor.apply(image: rendered, mask: shot.depthMask, strength: depthStrength)
+    private static func render(task: PendingRender) -> UIImage? {
+        guard let rendered = PhotoPostProcessor.render(original: task.shot.image, options: task.options) else { return nil }
+        guard task.useMatteDepth else { return rendered }
+        return DepthPortraitProcessor.apply(image: rendered, mask: task.shot.depthMask, strength: task.depthStrength)
     }
 
     private func finish(shot: CapturedPhoto,
