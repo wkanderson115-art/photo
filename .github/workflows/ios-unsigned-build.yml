@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -131,7 +131,7 @@ jobs:
   #      `bash scripts/typecheck.sh`，其余步骤照抄 build job。
   # ---------------------------------------------------------------------------
   typecheck:
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4

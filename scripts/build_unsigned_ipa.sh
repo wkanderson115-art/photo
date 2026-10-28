@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run on a Mac with Xcode 26+. The resulting IPA still requires Apple signing.
+# Run on a Mac with an iOS 17.6+ SDK. The resulting IPA still requires Apple signing.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 if [[ "$(uname -s)" != Darwin ]] || ! command -v xcodebuild >/dev/null 2>&1; then
@@ -7,8 +7,8 @@ if [[ "$(uname -s)" != Darwin ]] || ! command -v xcodebuild >/dev/null 2>&1; the
   exit 2
 fi
 SDK_VERSION=$(xcrun --sdk iphoneos --show-sdk-version)
-if [[ "${SDK_VERSION%%.*}" -lt 26 ]]; then
-  echo "BUILD BLOCKED: iOS 26+ SDK required; selected SDK is $SDK_VERSION." >&2
+if [[ "${SDK_VERSION%%.*}" -lt 17 ]]; then
+  echo "BUILD BLOCKED: iOS 17.6+ SDK required; selected SDK is $SDK_VERSION." >&2
   exit 2
 fi
 mkdir -p build
