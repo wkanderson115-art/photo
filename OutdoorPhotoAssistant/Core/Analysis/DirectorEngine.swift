@@ -237,7 +237,14 @@ enum DirectorCropImportance {
         let dy = max(py - 0.6, 0)
         let d = (dx * dx + dy * dy) * -20
         var s = 1.41 - sqrt(px * px + py * py)
-        if ruleOfThirds { s += max(0, s + d + 0.5) * 1.2 * (thirds(px) + thirds(py)) }
+        if ruleOfThirds {
+            // Compare the actual subject position with the four thirds-line
+            // intersections.  Feeding centre-distance into `thirds` made the
+            // former implementation reward the centre rather than the thirds.
+            let thirdX = max(0, 1 - min(abs(x - 1.0 / 3), abs(x - 2.0 / 3)) / 0.20)
+            let thirdY = max(0, 1 - min(abs(y - 1.0 / 3), abs(y - 2.0 / 3)) / 0.20)
+            s += 0.8 * (thirdX + thirdY)
+        }
         return s + d
     }
 }
