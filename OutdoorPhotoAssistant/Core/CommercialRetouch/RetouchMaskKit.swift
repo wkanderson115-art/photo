@@ -705,9 +705,12 @@ enum PixelKit {
     /// Feathered Gaussian blur; the caller is responsible for clamping/cropping.
     static func gaussian(_ image: CIImage, radius: Double) -> CIImage {
         guard radius.isFinite, radius > 0.3 else { return image }
-        let filter = CIFilter.gaussianBlur()
-        filter.inputImage = image
-        filter.radius = Float(radius)
+        // The typed `CIFilter` factory is not exposed by every SDK that this
+        // lightweight mask test supports.  The named filter is the same
+        // system filter and keeps the helper available on iOS 17+.
+        guard let filter = CIFilter(name: "CIGaussianBlur") else { return image }
+        filter.setValue(image, forKey: kCIInputImageKey)
+        filter.setValue(radius, forKey: kCIInputRadiusKey)
         guard let output = filter.outputImage else { return image }
         let extent = image.extent
         if extent.isInfinite || extent.isNull { return output }
@@ -716,10 +719,10 @@ enum PixelKit {
 
     /// `foreground` composited over `background` through the luminance of `mask`.
     static func blend(_ foreground: CIImage, over background: CIImage, mask: CIImage) -> CIImage {
-        let filter = CIFilter.blendWithMask()
-        filter.inputImage = foreground
-        filter.backgroundImage = background
-        filter.maskImage = mask
+        guard let filter = CIFilter(name: "CIBlendWithMask") else { return background }
+        filter.setValue(foreground, forKey: kCIInputImageKey)
+        filter.setValue(background, forKey: kCIInputBackgroundImageKey)
+        filter.setValue(mask, forKey: kCIInputMaskImageKey)
         guard let output = filter.outputImage else { return background }
         let extent = background.extent
         if extent.isInfinite || extent.isNull {
@@ -745,13 +748,13 @@ enum PixelKit {
         guard !extent.isInfinite, !extent.isNull, extent.width > 0, extent.height > 0 else { return mask }
         let value = min(max(luma, 0), 1)
         let clipped = mask.cropped(to: extent)
-        let matrix = CIFilter.colorMatrix()
-        matrix.inputImage = clipped
-        matrix.rVector = CIVector(x: value, y: 0, z: 0, w: 0)
-        matrix.gVector = CIVector(x: 0, y: value, z: 0, w: 0)
-        matrix.bVector = CIVector(x: 0, y: 0, z: value, w: 0)
+        guard let matrix = CIFilter(name: "CIColorMatrix") else { return clipped }
+        matrix.setValue(clipped, forKey: kCIInputImageKey)
+        matrix.setValue(CIVector(x: value, y: 0, z: 0, w: 0), forKey: "inputRVector")
+        matrix.setValue(CIVector(x: 0, y: value, z: 0, w: 0), forKey: "inputGVector")
+        matrix.setValue(CIVector(x: 0, y: 0, z: value, w: 0), forKey: "inputBVector")
         // Keep the mask opaque: blendWithMask reads luminance, not alpha.
-        matrix.aVector = CIVector(x: 0, y: 0, z: 0, w: 1)
+        matrix.setValue(CIVector(x: 0, y: 0, z: 0, w: 1), forKey: "inputAVector")
         let product = matrix.outputImage ?? clipped
         return gaussian(product.clampedToExtent(), radius: 2).cropped(to: extent)
     }
