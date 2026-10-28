@@ -12,6 +12,17 @@ if [[ "${SDK_VERSION%%.*}" -lt 26 ]]; then
   exit 2
 fi
 mkdir -p build
+# The imported project is valid OpenStep syntax, but recent Xcode versions can
+# reject its compact legacy formatting.  `pbxproj` is already part of the CI
+# verification requirements; rewriting through it preserves every object while
+# producing the canonical Xcode project representation before the real build.
+python3 - <<'PY'
+from pbxproj import XcodeProject
+
+path = "OutdoorPhotoAssistant.xcodeproj/project.pbxproj"
+project = XcodeProject.load(path)
+project.save(path)
+PY
 for CONFIG in Debug Release; do
   xcodebuild \
     -project OutdoorPhotoAssistant.xcodeproj \
