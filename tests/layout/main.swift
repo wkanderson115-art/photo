@@ -71,7 +71,8 @@ expect(near(landscapeOverlay.preview.height, landscapeOverlay.previewArea.height
 let oldLandscape = CaptureLayout.plan(available: CGSize(width: 852 - 59 * 2 - 250 - 28,
                                                         height: 393 - 21 - 100),
                                       landscape: true, aspect: 4.0 / 3.0, topBar: 52, bottomBar: 0)
-expect(oldLandscape.fillRatio < landscapeOverlay.fillRatio, "The old landscape layout leaves less viewfinder area than overlay controls")
+expect(oldLandscape.preview.width * oldLandscape.preview.height < landscapeOverlay.preview.width * landscapeOverlay.preview.height,
+       "The old landscape layout leaves less viewfinder area than overlay controls")
 
 // 边界：空容器 / 非法数值一律不崩，返回 0 与 overflow 0
 let emptyPlan = CaptureLayout.plan(available: .zero, landscape: false, aspect: 0.75, topBar: 52, bottomBar: 0)
