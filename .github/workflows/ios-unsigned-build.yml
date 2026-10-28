@@ -3,7 +3,7 @@ name: iOS Build (unsigned IPA)
 on:
   workflow_dispatch:
   push:
-    branches: [main, work, v19-figma-cloud-build]
+    branches: [main, work, v19-figma-cloud-build, landscape4x3-build]
   pull_request:
 
 permissions:
