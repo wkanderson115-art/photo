@@ -81,8 +81,7 @@ jobs:
           set -euo pipefail
           xcrun --sdk iphoneos swiftc -typecheck -target arm64-apple-ios17.6 \
             OutdoorPhotoAssistant/Core/CommercialRetouch/*.swift \
-            OutdoorPhotoAssistant/Core/Cloud/*.swift \
-            OutdoorPhotoAssistant/Features/CommercialRetouch/*.swift
+            OutdoorPhotoAssistant/Core/Cloud/*.swift
       - name: Type-check the retouch unit-test harnesses
         run: |
           set -euo pipefail

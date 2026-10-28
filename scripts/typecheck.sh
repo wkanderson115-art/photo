@@ -126,6 +126,9 @@ else
     ERROR_COUNT="$(grep -c ': error:' "${TYPE_LOG}" 2>/dev/null || true)"
     echo "类型检查失败，错误行数: ${ERROR_COUNT:-?}（完整日志：${TYPE_LOG}）" >&2
     sed -n '1,120p' "${TYPE_LOG}" >&2 || true
+    # Warnings can fill the first 120 lines. Print actual errors as well so
+    # cloud logs always retain the actionable failure locations.
+    grep ': error:' "${TYPE_LOG}" >&2 || true
     bad "类型检查 app 源码（${APP_FILE_COUNT} 个文件，swiftc -typecheck）"
   fi
 fi
