@@ -526,7 +526,10 @@ enum DirectorEngine {
         }
         var desired: Double
         if o.subjectKind == "face" {
-            desired = input.framing == "特写" ? 0.45 : 0.30
+            // A detected face at 30% of frame height is already too tight for
+            // the default portrait framing. Leave enough head and shoulder room
+            // unless the photographer explicitly asks for a close-up.
+            desired = input.framing == "特写" ? 0.45 : 0.26
         } else {
             switch input.framing {
             case "环境": desired = 0.42
