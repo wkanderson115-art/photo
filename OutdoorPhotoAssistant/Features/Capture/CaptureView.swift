@@ -878,7 +878,10 @@ struct CaptureView: View {
         .accessibilityElement(children: .contain)
     }
 
-    var body: some View {
+    /// Keep the camera surface separate from lifecycle modifiers. This avoids
+    /// a single SwiftUI expression growing beyond the compiler's inference
+    /// budget as controls are added to the capture screen.
+    private var captureSurface: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             GeometryReader { geo in
@@ -924,6 +927,10 @@ struct CaptureView: View {
                 .padding(.top, 90)
             }
         }
+    }
+
+    var body: some View {
+        captureSurface
         .sheet(isPresented: $showZoomControl) { zoomSheet }
         .sheet(isPresented: $showingEffects) { effectsPanel }
         .onChange(of: allowsRotation, initial: true) { _, allowed in
