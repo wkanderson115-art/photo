@@ -76,7 +76,7 @@ expect(oldLandscape.fillRatio < 0.30, "The old landscape layout wasted the viewf
 // 边界：空容器 / 非法数值一律不崩，返回 0 与 overflow 0
 let emptyPlan = CaptureLayout.plan(available: .zero, landscape: false, aspect: 0.75, topBar: 52, bottomBar: 0)
 expect(emptyPlan.preview == .zero && emptyPlan.overflow == 0, "Empty container gives an empty plan")
-let nanPlan = CaptureLayout.plan(available: CGSize(width: .nan, height: 400), landscape: false,
-                                 aspect: .nan, topBar: .nan, bottomBar: .nan)
+let nanPlan = CaptureLayout.plan(available: CGSize(width: CGFloat.nan, height: 400), landscape: false,
+                                 aspect: CGFloat.nan, topBar: CGFloat.nan, bottomBar: CGFloat.nan)
 expect(nanPlan.preview == .zero && nanPlan.fillRatio == 0, "NaN inputs collapse to an empty plan")
 print("Layout tests passed: \(checks)")
