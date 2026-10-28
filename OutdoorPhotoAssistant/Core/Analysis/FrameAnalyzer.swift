@@ -23,6 +23,9 @@ final class FrameAnalyzer: ObservableObject {
     @Published var visionEvidenceAt = Date.distantPast
     private var latestVision = DirectorVisionEvidence()
     private var latestVisionAt = Date.distantPast
+    private var latestML: DirectorMLOutput?
+    private var latestMLAt = -Double.infinity
+    private var mlSmoother = DirectorMLSmoother()
     @Published var subject = SubjectInfo()
     @Published var frameAspectRatio: CGFloat = 0.75
     @Published var brightness: Double = 0.5
@@ -192,7 +195,21 @@ final class FrameAnalyzer: ObservableObject {
             } else { info = SubjectInfo(); kind = "none" }
         }
         let horizon = succeeded.contains(ObjectIdentifier(horizonRequest)) ? Double(horizonRequest.results?.first?.angle ?? 0) : 0
-        let scene = Self.classifyScene(labels: lastLabels, personConfidence: personConfidence)
+        // Learned director: runs on the same slow tick as scene classification; no model bundled = nil.
+        let nowTime = CFAbsoluteTimeGetCurrent()
+        if classify && DirectorMLModel.shared.isAvailable {
+            if let raw = DirectorMLModel.shared.predict(buffer: buffer) {
+                latestML = mlSmoother.update(raw, now: nowTime)
+                latestMLAt = nowTime
+            } else { latestML = nil; mlSmoother.reset() }
+        }
+        let mlForFrame: DirectorMLOutput? = nowTime - latestMLAt < 1.5 ? latestML : nil
+        var scene = Self.classifyScene(labels: lastLabels, personConfidence: personConfidence)
+        // The model may refine non-person scenes; people stay Vision's call.
+        if let ml = mlForFrame, ml.scene != "人物", personConfidence < 0.35,
+           ml.sceneConfidence >= 0.6, ml.sceneConfidence > scene.confidence {
+            scene = (name: ml.scene, confidence: ml.sceneConfidence)
+        }
 
         // 场景滞回：连续 3 帧同场景才切换，避免 人物/风景 反复跳变
         if scene.name == sceneCandidate {
@@ -209,9 +226,10 @@ final class FrameAnalyzer: ObservableObject {
         let period = currentPeriod
         periodLockRef.unlock()
 
-        let directorObservation = Self.directorStatistics(buffer, subject: info, kind: kind,
+        var directorObservation = Self.directorStatistics(buffer, subject: info, kind: kind,
                                                          personCount: personCount, brightness: brightness,
                                                          sharpness: sharpness, horizon: horizon)
+        directorObservation.ml = mlForFrame
         if classify {
             let full = CIImage(cvPixelBuffer: buffer)
             if requestedPoint != nil && info.rect != .zero {
@@ -240,7 +258,9 @@ final class FrameAnalyzer: ObservableObject {
 
         let geometryOK = abs(horizon) < 0.06 && brightness > 0.16 && brightness < 0.88
         let threshold = info.rect == .zero ? 66 : 76
-        let readyNow = score >= threshold && geometryOK
+        // Loose veto only: the model never forces a shot, it can just hold one back.
+        let modelOK = (mlForFrame?.quality ?? 1) >= 0.25
+        let readyNow = score >= threshold && geometryOK && modelOK
         readinessStreak = readyNow ? readinessStreak + 1 : 0
         let ready = readinessStreak >= 3
         let held = score >= max(0, threshold - 4) && abs(horizon) < 0.08 && brightness > 0.14 && brightness < 0.90
@@ -249,6 +269,7 @@ final class FrameAnalyzer: ObservableObject {
         else if abs(horizon) >= 0.06 { readyReason = String(format: "水平倾斜 %.1f°，先校平手机", abs(horizon) * 180 / .pi) }
         else if brightness <= 0.16 { readyReason = "光线不足，补光或移到亮处" }
         else if brightness >= 0.88 { readyReason = "高光过强，压低曝光或换角度" }
+        else if !modelOK { readyReason = "AI 导演认为取景偏差较大，先按提示调整" }
         else if score < threshold { readyReason = "构图分 \(score)/\(threshold)，调整主体位置" }
         else { readyReason = "等待构图稳定确认" }
 

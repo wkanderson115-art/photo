@@ -13,8 +13,11 @@ struct CloudAPISettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Text("直接连接模型平台，无需服务器月租；模型按实际使用计费。")
-                    .font(.subheadline).foregroundStyle(AppTheme.muted)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("按需连接云端").font(.title3.bold()).foregroundStyle(AppTheme.ink)
+                    Text("看图建议和照片精修分别配置；只有你发起处理时才上传。")
+                        .font(.subheadline).foregroundStyle(AppTheme.muted)
+                }
                 keyCard(title: "DeepSeek", subtitle: "看图识别与自然修图建议", key: $deepSeekKey, configured: hasDeepSeekKey, provider: .deepseek)
                 keyCard(title: "Seedream", subtitle: "照片精修 · 火山方舟 Key", key: $seedreamKey, configured: hasSeedreamKey, provider: .seedream)
                 if let status { Text(status).font(.footnote).foregroundStyle(AppTheme.ink).appCard() }

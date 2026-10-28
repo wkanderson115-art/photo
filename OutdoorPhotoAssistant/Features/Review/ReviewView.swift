@@ -55,24 +55,33 @@ struct ReviewView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                previewSection
-                if shot.depthMask != nil {
-                    depthSection
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("先看画面，再决定如何调整")
+                        .font(.subheadline).foregroundStyle(AppTheme.muted)
+                    previewSection
+                    Text(inspection).font(.subheadline).padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(AppTheme.soft, in: RoundedRectangle(cornerRadius: 16))
+                    filterControls
+                    curveControls
+                    metrics
+                    directorReview
+                    DisclosureGroup("人像与景深调整") {
+                        VStack(spacing: 12) {
+                            if shot.depthMask != nil { depthSection }
+                            beautyControls
+                        }
+                    }
+                    .padding(16)
+                    .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 18))
+                    if let status {
+                        Text(status).font(.footnote).foregroundStyle(AppTheme.muted)
+                    }
                 }
-                Text(inspection).font(.subheadline).padding()
-                metrics
-                directorReview
-                filterControls
-                curveControls
-                beautyControls
-                if let status {
-                    Text(status)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .padding(.bottom)
-                }
+                .padding(16)
             }
-            .navigationTitle("照片分析与人像优化")
+            .background(AppTheme.paper)
+            .navigationTitle("照片复盘")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {

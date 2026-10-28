@@ -10,7 +10,7 @@ import Combine
 /// no-op and a batch can be re-run with one photo's overrides applied to all.
 struct RetouchAdjustments: Codable, Equatable {
     var strength: Double = 1.0              // 0.4 ... 1.3
-    var presetID: String = "p02"
+    var presetID: String = "p25"
     var reshape: ReshapeParameters = .neutral
     var background: BackgroundOptions = .keep
     var idPhoto: IDPhotoSpec? = nil

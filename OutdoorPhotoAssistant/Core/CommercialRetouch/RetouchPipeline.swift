@@ -46,7 +46,8 @@ final class RetouchPipeline {
     // MARK: - Preset suggestion
 
     func suggestPreset(image: UIImage) async -> (RetouchPreset, String) {
-        guard let cg = image.cgImage else { return (RetouchPresetCatalog.all[0], "无法识别，采用安全默认预设") }
+        let fallback = RetouchPresetCatalog.find("p25")
+        guard let cg = image.cgImage else { return (fallback, "无法识别，采用自然风光预设") }
         let request = VNClassifyImageRequest()
         do {
             try VNImageRequestHandler(cgImage: cg,
@@ -55,11 +56,11 @@ final class RetouchPipeline {
             let labels = (request.results ?? []).filter { $0.confidence >= 0.20 }
             let all = labels.map { $0.identifier.lowercased() }.joined(separator: " ")
             let target = Self.sceneTarget(from: all)
-            let preset = RetouchPresetCatalog.all.first { $0.name == target } ?? RetouchPresetCatalog.all[0]
+            let preset = RetouchPresetCatalog.all.first { $0.name == target } ?? fallback
             return (preset, labels.first.map { "Vision 初步识别：\($0.identifier)（置信度 \(Int($0.confidence * 100))%），建议人工确认预设" }
                     ?? "未找到可靠分类，建议人工确认预设")
         } catch {
-            return (RetouchPresetCatalog.all[0], "场景识别失败，采用安全默认预设")
+            return (fallback, "场景识别失败，采用自然风光预设")
         }
     }
 
@@ -295,7 +296,9 @@ final class RetouchPipeline {
         // QC runs on the retouch itself, before liquify / background work:
         // those two are parameter edits the operator reviews by eye, and a cutout
         // would otherwise fail the structural metrics by design.
-        var report = RetouchQualityReport.failure
+        var report = RetouchQualityReport(
+            passed: false, metrics: [:],
+            notes: ["未检测到可用人脸：已执行全图色调与风格精修，肤质质检跳过，请人工复核成片"])
         if let analysis {
             let remaining = engine.detectSpots(in: work, analysis: analysis, parameters: parameters).spots.count
             let clearance = spots.isEmpty ? 1.0 : max(0.0, min(1.0, 1.0 - Double(remaining) / Double(spots.count)))
@@ -308,7 +311,8 @@ final class RetouchPipeline {
                                                           context: context))
         }
 
-        if !adjustments.reshape.isNeutral {
+        let portraitPreset = ["人像摄影", "婚纱与情侣", "家庭与儿童", "时尚与穿搭"].contains(preset.category)
+        if portraitPreset && !adjustments.reshape.isNeutral {
             work = reshapeEngine.apply(work, geometry: geometry, parameters: adjustments.reshape)
             applyStudioNote(&report, "已液化：需目视复核脸型与背景边缘")
         }
@@ -435,8 +439,7 @@ final class RetouchVersionStore {
         guard ["local", "seedream", "fusion"].contains(label) else { throw RetouchFailure.invalidExport }
         let folder = root.appendingPathComponent(job.uuidString, isDirectory: true)
         let temporary = folder.appendingPathComponent("\(label)-\(UUID().uuidString).tmp")
-        guard let ci = CIImage(image: image),
-              let cg = CIContext().createCGImage(ci, from: ci.extent) else { throw RetouchFailure.invalidExport }
+        guard let cg = image.cgImage else { throw RetouchFailure.invalidExport }
         let rgb = CGColorSpace(name: CGColorSpace.sRGB)!
         let normalized = CIContext().createCGImage(CIImage(cgImage: cg),
                                                    from: CGRect(x: 0, y: 0, width: cg.width, height: cg.height),

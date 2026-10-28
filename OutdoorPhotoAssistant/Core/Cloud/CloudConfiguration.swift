@@ -2,13 +2,16 @@ import Foundation
 import Security
 
 struct CloudConfiguration {
-    static let deepSeekDefault = "deepseek-v4-flash"
+    static let deepSeekDefault = "deepseek-v4.1-flash"
     static let seedreamDefault = "doubao-seedream-5-0-pro-260628"
 
     /// A blank or whitespace-only stored id falls back to the current default,
     /// so a cleared text field can never reach the provider as an empty model.
     static var seedreamModel: String { stored("seedreamModel") ?? seedreamDefault }
-    static var deepSeekModel: String { stored("deepSeekModel") ?? deepSeekDefault }
+    static var deepSeekModel: String {
+        let selected = stored("deepSeekModel")
+        return selected == "deepseek-v4-flash" ? deepSeekDefault : (selected ?? deepSeekDefault)
+    }
 
     private static func stored(_ key: String) -> String? {
         guard let value = UserDefaults.standard.string(forKey: key)?

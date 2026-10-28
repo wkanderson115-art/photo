@@ -55,11 +55,11 @@ struct LocalPortraitReview {
 enum LocalTiledRenderer {
     static func render(_ image: CIImage, extent: CGRect, context: CIContext,
                        tileEdge: Int = 1024) -> CGImage? {
-        let width = Int(extent.width.rounded(.towardZero))
-        let height = Int(extent.height.rounded(.towardZero))
+        let bounds = extent.integral
+        let width = Int(bounds.width)
+        let height = Int(bounds.height)
         guard width > 0, height > 0, width <= 30000, height <= 30000,
-              tileEdge >= 128, tileEdge <= 4096,
-              extent.width == CGFloat(width), extent.height == CGFloat(height) else { return nil }
+              tileEdge >= 128, tileEdge <= 4096 else { return nil }
         guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
               let destination = CGContext(data: nil, width: width, height: height,
                                           bitsPerComponent: 8, bytesPerRow: 0,
@@ -69,7 +69,7 @@ enum LocalTiledRenderer {
         for y in stride(from: 0, to: height, by: tileEdge) {
             for x in stride(from: 0, to: width, by: tileEdge) {
                 let tw = min(tileEdge, width - x), th = min(tileEdge, height - y)
-                let roi = CGRect(x: extent.minX + CGFloat(x), y: extent.minY + CGFloat(y),
+                let roi = CGRect(x: bounds.minX + CGFloat(x), y: bounds.minY + CGFloat(y),
                                  width: CGFloat(tw), height: CGFloat(th))
                 guard let tile = context.createCGImage(image, from: roi,
                                                        format: .RGBA8, colorSpace: colorSpace) else { return nil }

@@ -15,11 +15,11 @@ OUT = PROJECT_DIR / "project.pbxproj"
 SCHEME = PROJECT_DIR / "xcshareddata" / "xcschemes" / "OutdoorPhotoAssistant.xcscheme"
 
 GROUPS = {
-    "App": ["OutdoorPhotoAssistantApp.swift", "RootView.swift", "AppTheme.swift"],
+    "App": ["OutdoorPhotoAssistantApp.swift", "RootView.swift", "AppTheme.swift", "OrientationPolicy.swift"],
     "Core/Camera": ["AdaptiveCameraEngine.swift", "CameraService.swift", "CaptureHandoff.swift", "DepthPortraitProcessor.swift"],
     "Core/Analysis": [
         "FrameAnalyzer.swift",
-        "DirectorEngine.swift", "DirectorVision.swift",
+        "DirectorEngine.swift", "DirectorVision.swift", "DirectorMLModel.swift",
         "PhotoFilter.swift",
         "ColorGrade.swift",
         "PortraitBeautyEngine.swift",
@@ -35,7 +35,7 @@ GROUPS = {
     "Features/Cloud": ["CloudAPISettingsView.swift"],
     "Core/Location": ["LocationService.swift"],
     "Core/Motion": ["MotionService.swift"],
-    "Features/Capture": ["CaptureView.swift", "CompositionOverlay.swift"],
+    "Features/Capture": ["CaptureView.swift", "CaptureLayout.swift", "CompositionOverlay.swift"],
     "Features/Review": ["ReviewView.swift"],
     "Features/Settings": ["SettingsView.swift"],
 }
@@ -67,7 +67,7 @@ class Ids:
 
 
 def quote(value: str) -> str:
-    if value == "" or any(ch in value for ch in " /:()$"):
+    if value == "" or any(ch in value for ch in " /:()$+"):
         return f'"{value}"'
     return value
 

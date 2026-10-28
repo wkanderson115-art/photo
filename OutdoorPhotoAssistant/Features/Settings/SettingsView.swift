@@ -34,9 +34,13 @@ struct SettingsView: View {
             Form {
                 Section {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("把画面留给风景").font(.title2.bold())
-                        Text("偏好在这里设置，拍摄时保持专注。")
+                        Text("按你的习惯拍摄").font(.title2.bold()).foregroundStyle(AppTheme.ink)
+                        Text("拍摄行为、画面效果、保存和云端服务集中管理。")
                             .font(.subheadline).foregroundStyle(.secondary)
+                        HStack(spacing: 8) {
+                            Label(autoDirector ? "导演开启" : "导演关闭", systemImage: "viewfinder")
+                            Label(autoFilter ? "滤镜自动" : "滤镜手动", systemImage: "camera.filters")
+                        }.font(.caption).foregroundStyle(AppTheme.muted)
                     }.padding(.vertical, 8)
                 }
                 Section {
@@ -174,7 +178,9 @@ struct SettingsView: View {
                         Text(NextLevelDeviceControls.licenseText).font(.caption).textSelection(.enabled)
                     }
                 }
-            }.navigationTitle("拍摄设置")
+            }.scrollContentBackground(.hidden)
+                .background(AppTheme.paper)
+                .navigationTitle("设置")
                 .toolbar {
                     if isPresentedModally {
                         ToolbarItem(placement: .topBarTrailing) { Button("完成") { dismiss() } }

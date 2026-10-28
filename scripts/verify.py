@@ -131,7 +131,9 @@ for key in [
     "UISupportedInterfaceOrientations",
 ]:
     check(key in info, f"Info.plist has {key}")
-check(info.get("UISupportedInterfaceOrientations") == ["UIInterfaceOrientationPortrait"], "portrait-locked")
+check(set(info.get("UISupportedInterfaceOrientations", [])) == {
+    "UIInterfaceOrientationPortrait", "UIInterfaceOrientationLandscapeLeft",
+    "UIInterfaceOrientationLandscapeRight"}, "portrait and landscape camera orientations")
 
 privacy = plistlib.loads((APP / "PrivacyInfo.xcprivacy").read_bytes())
 api_types = privacy.get("NSPrivacyAccessedAPITypes", [])

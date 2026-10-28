@@ -253,9 +253,7 @@ final class RetouchBackgroundEngine {
 
     static func solidColor(_ color: SIMD3<Double>, extent: CGRect) -> CIImage {
         let fill = ciColor(color)
-        let generator = CIFilter.constantColorGenerator()
-        generator.color = fill
-        return (generator.outputImage ?? CIImage(color: fill)).cropped(to: extent)
+        return CIImage(color: fill).cropped(to: extent)
     }
 
     static func ciColor(_ value: SIMD3<Double>) -> CIColor {

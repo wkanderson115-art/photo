@@ -35,7 +35,7 @@ final class MockProtocol: URLProtocol {
         defer { session.invalidateAndCancel() }
         // A stale or invented DeepSeek model id fails every advice request, and the
         // settings UI reads the same source, so the id is asserted, not assumed.
-        expect(["deepseek-v4-flash", "deepseek-v4-pro"].contains(CloudConfiguration.deepSeekDefault),
+        expect(["deepseek-v4.1-flash", "deepseek-v4-pro"].contains(CloudConfiguration.deepSeekDefault),
                "Default DeepSeek model id is a currently supported official id")
         let request = try DeepSeekClient.request(jpeg: jpeg, instruction: "自然肤色", key: "fixture-deepseek", model: CloudConfiguration.deepSeekDefault)
         expect(request.url?.absoluteString == "https://api.deepseek.com/chat/completions", "DeepSeek goes directly to its official endpoint")
@@ -118,10 +118,10 @@ final class MockProtocol: URLProtocol {
         let customInstruction = "精修分类：自然肤质。期望成片：干净肤色；验收标准：毛孔可见；必须保留：雀斑"
         let combined = try DeepSeekClient.request(jpeg: jpeg, instruction: customInstruction, key: "fixture", model: CloudConfiguration.deepSeekDefault)
         let combinedBody = try JSONSerialization.jsonObject(with: combined.httpBody!) as! [String: Any]
-        let messages = combinedBody["messages"] as! [[String: Any]]
-        let parts = messages.last!["content"] as! [[String: Any]]
-        expect((parts.first?["text"] as? String)?.contains(customInstruction) == true, "Exact user goals and standards sent in user content")
-        expect(parts.contains { $0["type"] as? String == "image_url" }, "Photo accompanies requirements in same user message")
+        let combinedMessages = combinedBody["messages"] as! [[String: Any]]
+        let combinedParts = combinedMessages.last!["content"] as! [[String: Any]]
+        expect((combinedParts.first?["text"] as? String)?.contains(customInstruction) == true, "Exact user goals and standards sent in user content")
+        expect(combinedParts.contains { $0["type"] as? String == "image_url" }, "Photo accompanies requirements in same user message")
         let withReference = try DeepSeekClient.request(jpeg: jpeg, instruction: customInstruction, key: "fixture", model: CloudConfiguration.deepSeekDefault, referenceJPEG: jpeg)
         let refBody = try JSONSerialization.jsonObject(with: withReference.httpBody!) as! [String: Any]
         let refMessages = refBody["messages"] as! [[String: Any]]

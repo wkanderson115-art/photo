@@ -93,4 +93,40 @@ expect(DirectorEngine.evaluate(input).evidence.contains { $0.domain == "候选�
 store.reset()
 expect(store.feedbackCount == 0, "Reset removes learned preferences")
 defaults.removePersistentDomain(forName: suite)
+
+// MARK: - Learned director (Core ML) guidance and smoothing
+func mlOutput(quality: Double, dx: Double = 0, dy: Double = 0, dz: Double = 0) -> DirectorMLOutput {
+    DirectorMLOutput(scene: "风景", sceneConfidence: 0.8, quality: quality, dx: dx, dy: dy, dz: dz)
+}
+expect(DirectorEngine.mlEvidence(nil).isEmpty, "No model output means no model guidance")
+expect(DirectorEngine.mlEvidence(mlOutput(quality: .nan)).isEmpty, "Non-finite model output is ignored")
+expect(DirectorEngine.mlEvidence(mlOutput(quality: 0.9, dx: 0.5)).first?.action == "保持当前取景", "A high framing score keeps the framing")
+let rightMove = DirectorEngine.mlEvidence(mlOutput(quality: 0.3, dx: 0.4))
+expect(rightMove.first?.action.contains("向右转") == true, "Positive dx tells the photographer to turn right")
+expect(rightMove.contains { $0.domain == "机位" }, "A clear move is promoted to the camera-position line")
+let leftUp = DirectorEngine.mlEvidence(mlOutput(quality: 0.3, dx: -0.15, dy: -0.15))
+expect(leftUp.first?.action.contains("向左转") == true && leftUp.first?.action.contains("抬") == true, "Negative dx/dy turn left and tilt up")
+expect(!leftUp.contains { $0.domain == "机位" }, "A small move is not promoted to the camera-position line")
+expect(DirectorEngine.mlEvidence(mlOutput(quality: 0.3, dz: 0.3)).first?.action.contains("推近") == true, "Positive dz suggests moving closer")
+expect(DirectorEngine.mlEvidence(mlOutput(quality: 0.3, dz: -0.3)).first?.action.contains("拉远") == true, "Negative dz suggests pulling back")
+
+input = fixture(); input.observation.subject = nil
+input.observation.ml = mlOutput(quality: 0.2, dx: 0.4)
+let noSubject = DirectorEngine.evaluate(input)
+expect(!noSubject.shouldZoom && noSubject.targetZoom == 1, "Model guidance alone never drives the lens")
+expect(noSubject.summary.contains("向右转"), "Model guidance reaches the instruction line without a subject")
+
+input = fixture(); input.observation.ml = mlOutput(quality: 0.2, dx: 0.4)
+let withSubject = DirectorEngine.evaluate(input)
+expect(withSubject.evidence.contains { $0.domain == "AI模型" }, "Subject path also carries the model evidence")
+input.observation.ml = nil
+expect(DirectorEngine.evaluate(input).targetZoom == withSubject.targetZoom, "The model does not change the zoom target")
+
+var smoother = DirectorMLSmoother()
+let first = smoother.update(mlOutput(quality: 0.2, dx: 0.4), now: 0)
+expect(first.dx == 0.4, "The first sample passes through")
+let second = smoother.update(mlOutput(quality: 0.6, dx: 0.0), now: 0.5)
+expect(abs(second.dx - 0.2) < 1e-9 && abs(second.quality - 0.4) < 1e-9, "Later samples are blended")
+let afterGap = smoother.update(mlOutput(quality: 0.9, dx: -0.3), now: 5)
+expect(afterGap.dx == -0.3, "A long gap resets the smoother")
 print("Director tests passed: \(checks)")

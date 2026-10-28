@@ -296,8 +296,8 @@ final class HybridFusionEngine {
         var metrics: [String: Double] = [
             "local_score": Self.rounded3(score(localReport)),
             "cloud_score": Self.rounded3(score(cloudReport)),
-            "edge_weight": Self.rounded3(subjectEdgeWeight),
-            "feather_px": Double(seamFeatherPx),
+            "edge_weight": Self.rounded3(Self.subjectEdgeWeight),
+            "feather_px": Double(Self.seamFeatherPx),
         ]
         // The cloud render is fitted into the local frame; the local extent is never
         // resized.

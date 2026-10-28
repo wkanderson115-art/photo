@@ -9,38 +9,39 @@ struct GalleryView: View {
     @State private var filter = "全部照片"
     @State private var pendingDelete: UUID?
     @State private var deleteError: String?
-    private let columns = [GridItem(.flexible(), spacing: 13), GridItem(.flexible(), spacing: 13)]
+    private let columns = [GridItem(.adaptive(minimum: 145), spacing: 12)]
     private var displayed: [AppPhotoRecord] {
         filter == "AI成片" ? library.records.filter { $0.versions.contains { $0.kind == "seedream" } } : library.records
     }
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    Text("原片与成片，都在这里。").font(.subheadline).foregroundStyle(AppTheme.muted)
-                    HStack(spacing: 28) {
-                        ForEach(["全部照片", "AI成片", "原片"], id: \.self) { value in
-                            Button { filter = value } label: {
-                                Text(value).font(.subheadline.weight(filter == value ? .semibold : .regular))
-                                    .foregroundStyle(filter == value ? AppTheme.ink : AppTheme.muted).frame(minHeight: 44)
-                            }.buttonStyle(.plain).accessibilityAddTraits(filter == value ? .isSelected : [])
-                        }
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("你的照片").font(.title3.bold()).foregroundStyle(AppTheme.ink)
+                        Text("\(library.records.count) 张原片 · \(library.records.filter { $0.versions.contains { $0.kind == "seedream" } }.count) 张 AI 成片")
+                            .font(.subheadline).foregroundStyle(AppTheme.muted)
                     }
+                    Picker("显示版本", selection: $filter) {
+                        Text("全部照片").tag("全部照片")
+                        Text("AI成片").tag("AI成片")
+                        Text("原片").tag("原片")
+                    }.pickerStyle(.segmented)
                     if displayed.isEmpty {
-                        ContentUnavailableView(filter == "AI成片" ? "还没有AI成片" : "还没有照片", systemImage: "photo", description: Text("拍摄先保存在本机，选择照片后才决定是否精修。"))
+                        ContentUnavailableView(filter == "AI成片" ? "还没有 AI 成片" : "还没有照片", systemImage: "photo.on.rectangle", description: Text("拍照后会保存在这里。点开照片可查看原片、建议和精修版本。"))
                     } else {
-                        LazyVGrid(columns: columns, spacing: 24) {
+                        LazyVGrid(columns: columns, spacing: 12) {
                             ForEach(displayed) { record in
                                 NavigationLink { GalleryPhotoDetail(photoID: record.id) } label: {
                                     VStack(alignment: .leading, spacing: 8) {
                                         GalleryImage(photoID: record.id, assetID: filter == "原片" ? "original" : filter == "AI成片" ? record.versions.last(where: { $0.kind == "seedream" })?.id.uuidString ?? record.preferredAssetID : record.preferredAssetID, thumbnail: true, revision: record.revision)
-                                            .frame(height: 174).clipped().clipShape(RoundedRectangle(cornerRadius: 18))
+                                            .frame(height: 160).clipped().clipShape(RoundedRectangle(cornerRadius: 12))
                                         Text(record.capturedAt.formatted(date: .abbreviated, time: .shortened))
-                                            .font(.subheadline.weight(.semibold)).foregroundStyle(AppTheme.ink)
+                                            .font(.caption.weight(.semibold)).foregroundStyle(AppTheme.ink).lineLimit(1)
                                         if record.jobs.contains(where: { $0.state == "running" }) {
-                                            Text("云端任务进行中").font(.caption).foregroundStyle(AppTheme.muted)
+                                            Label("处理中", systemImage: "hourglass").font(.caption2).foregroundStyle(AppTheme.muted)
                                         }
-                                    }
+                                    }.padding(8).background(AppTheme.card, in: RoundedRectangle(cornerRadius: 16))
                                 }.buttonStyle(.plain)
                                 .overlay(alignment: .topTrailing) {
                                     Button(role: .destructive) { pendingDelete = record.id } label: {
@@ -52,10 +53,10 @@ struct GalleryView: View {
                             }
                         }
                     }
-                    Text("选择一张照片，再决定是否精修。").font(.caption).foregroundStyle(AppTheme.muted)
+                    Text("点开照片查看原片、精修版本与看图建议。").font(.caption).foregroundStyle(AppTheme.muted)
                     if let error = library.lastSaveError { Text(error).font(.footnote).foregroundStyle(.red) }
                     if let error = library.lastExportError { Text(error).font(.footnote).foregroundStyle(.secondary) }
-                }.padding(24)
+                }.padding(16)
             }.background(AppTheme.paper).navigationTitle("我的图库")
                 .toolbar { NavigationLink { CloudAPISettingsView() } label: { Image(systemName: "key") }.accessibilityLabel("云端服务") }
                 .onAppear { library.loadIfNeeded() }
@@ -301,14 +302,84 @@ private struct GalleryPhotoDetail: View {
     private var pageTitle: String { stage == "建议" ? "看图建议" : stage == "精修" ? "照片精修" : "这张照片怎么处理" }
     private var adviceReady: Bool { !useDeepSeek || (activeAdvice?.id == adoptedAdviceID && !editPrompt.isEmpty) }
 
-    var body: some View {
+    private func loadReference(_ item: PhotosPickerItem?) async {
+        referenceJPEG = nil
+        referenceError = nil
+        guard let item else { referenceLoading = false; return }
+        referenceLoading = true
+        defer { if referenceItem == item { referenceLoading = false } }
+        do {
+            guard let raw = try await item.loadTransferable(type: Data.self),
+                  let source = CGImageSourceCreateWithData(raw as CFData, nil) else {
+                throw CloudAPIError.invalidImage
+            }
+            let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                                             kCGImageSourceCreateThumbnailWithTransform: true,
+                                             kCGImageSourceThumbnailMaxPixelSize: 1280]
+            guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
+                  let jpeg = UIImage(cgImage: cg).jpegData(compressionQuality: 0.9),
+                  jpeg.count <= 15 * 1024 * 1024 else { throw CloudAPIError.invalidImage }
+            guard !Task.isCancelled, referenceItem == item else { return }
+            referenceJPEG = jpeg
+        } catch {
+            if !Task.isCancelled && referenceItem == item { referenceError = "参考图无法读取，请移除或重新选择。" }
+        }
+    }
+
+    private var basePage: some View {
         ScrollView {
             if let record {
-                VStack(alignment: .leading, spacing: 22) {
-                    Text(stage == "建议" ? "1 / 2    先看建议，再决定修图" : stage == "精修" ? "2 / 2    确认要求后才生成" : "上传源：选中版本 · 可切换")
+                detailContent(record)
+            } else { ContentUnavailableView("照片暂不可用", systemImage: "photo") }
+        }.background(AppTheme.paper).navigationTitle(pageTitle)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { NavigationLink { CloudAPISettingsView() } label: { Image(systemName: "key") } }
+            .sheet(isPresented: $showAdviceRequest) { adviceRequestSheet }
+            .sheet(isPresented: $showingOutputSheet) { seedreamOutputSheet }
+    }
+
+    private var observedPage: some View {
+        basePage
+            .task(id: referenceItem) {
+                await loadReference(referenceItem)
+            }
+            .onAppear(perform: configureIfNeeded)
+            .onChange(of: retouchStyle) { _, value in
+                switch value {
+                case "黑白肖像": adviceStandard = "黑白灰阶分明；皮肤与衣物分离；亮暗保留细节。"
+                case "复古胶片": adviceStandard = "胶片色彩克制；黑位不蒙灰；颗粒不遮细节；肤色干净。"
+                case "夜景人像": adviceStandard = "保留夜间氛围和彩灯；脸部可辨；不磨平纹理。"
+                default: adviceStandard = "肤色自然；皮肤保留纹理；主体清晰；亮部有层次。"
+                }
+            }
+            .onChange(of: useDeepSeek) { _, enabled in
+                if !enabled && editPrompt.isEmpty { editPrompt = requestText }
+            }
+    }
+
+    var body: some View {
+        observedPage
+            .onChange(of: sourceID) { _, _ in
+                workflow.clearSelection(); adoptedAdviceID = nil; editPrompt = ""; exportStatus = nil; stage = "选择"; compareResult = false
+            }
+            .onChange(of: workflow.advice?.id) { _, id in if id != nil { stage = "建议" } }
+            .onChange(of: workflow.generatedVersionID) { _, id in if id != nil { stage = "精修"; compareResult = true } }
+            .onChange(of: requestText) { _, _ in adoptedAdviceID = nil }
+    }
+    private func configureIfNeeded() {
+        guard !configured else { return }
+        useDeepSeek = defaultDeepSeekFirst
+        adviceStandard = "肤色自然；皮肤保留纹理；主体清晰；亮部有层次。"
+        configured = true
+    }
+    private func detailContent(_ record: AppPhotoRecord) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+                    Text(stage == "建议" ? "第一步 · 看图建议" : stage == "精修" ? "第二步 · 确认精修" : "选择照片版本")
+                        .font(.headline).foregroundStyle(AppTheme.ink)
+                    Text(stage == "建议" ? "看完建议再决定是否生成成片" : stage == "精修" ? "确认修图要求后才会发起处理" : "选择要查看或处理的版本")
                         .font(.caption).foregroundStyle(AppTheme.muted)
                     GalleryImage(photoID: photoID, assetID: displayAssetID, thumbnail: false, revision: record.revision)
-                        .frame(height: stage == "建议" ? 174 : 220).clipShape(RoundedRectangle(cornerRadius: 18))
+                        .frame(height: 240).clipShape(RoundedRectangle(cornerRadius: 18))
                     if stage == "精修", matchingResult != nil {
                         Picker("原片与AI成片对比", selection: $compareResult) {
                             Text("上传源").tag(false); Text("AI成片").tag(true)
@@ -327,40 +398,7 @@ private struct GalleryPhotoDetail: View {
                         }
                     }.buttonStyle(.bordered).disabled(isBusy)
                     if let exportStatus { Text(exportStatus).font(.footnote).foregroundStyle(.secondary) }
-                }.padding(24)
-            } else { ContentUnavailableView("照片暂不可用", systemImage: "photo") }
-        }.background(AppTheme.paper).navigationTitle(pageTitle)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { NavigationLink { CloudAPISettingsView() } label: { Image(systemName: "key") } }
-            .sheet(isPresented: $showAdviceRequest) { adviceRequestSheet }
-            .sheet(isPresented: $showingOutputSheet) { seedreamOutputSheet }
-            .task(id: referenceItem) {
-                referenceJPEG = nil; referenceError = nil
-                guard let item = referenceItem else { referenceLoading = false; return }
-                referenceLoading = true
-                defer { if referenceItem == item { referenceLoading = false } }
-                do {
-                    guard let raw = try await item.loadTransferable(type: Data.self),
-                          let source = CGImageSourceCreateWithData(raw as CFData, nil),
-                          let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: 1280] as CFDictionary),
-                          let jpeg = UIImage(cgImage: cg).jpegData(compressionQuality: 0.9), jpeg.count <= 15 * 1024 * 1024 else { throw CloudAPIError.invalidImage }
-                    guard !Task.isCancelled, referenceItem == item else { return }
-                    referenceJPEG = jpeg
-                } catch { if !Task.isCancelled && referenceItem == item { referenceError = "参考图无法读取，请移除或重新选择。" } }
-            }
-            .onAppear { if !configured { useDeepSeek = defaultDeepSeekFirst; adviceStandard = "肤色自然；皮肤保留纹理；主体清晰；亮部有层次。"; configured = true } }
-            .onChange(of: retouchStyle) { _, value in
-                adviceStandard = value == "黑白肖像" ? "黑白灰阶分明；皮肤与衣物分离；亮暗保留细节。" : value == "复古胶片" ? "胶片色彩克制；黑位不蒙灰；颗粒不遮细节；肤色干净。" : value == "夜景人像" ? "保留夜间氛围和彩灯；脸部可辨；不磨平纹理。" : "肤色自然；皮肤保留纹理；主体清晰；亮部有层次。"
-            }
-            .onChange(of: useDeepSeek) { _, enabled in
-                if !enabled && editPrompt.isEmpty { editPrompt = requestText }
-            }
-            .onChange(of: sourceID) { _, _ in
-                workflow.clearSelection(); adoptedAdviceID = nil; editPrompt = ""; exportStatus = nil; stage = "选择"; compareResult = false
-            }
-            .onChange(of: workflow.advice?.id) { _, id in if id != nil { stage = "建议" } }
-            .onChange(of: workflow.generatedVersionID) { _, id in if id != nil { stage = "精修"; compareResult = true } }
-            .onChange(of: requestText) { _, _ in adoptedAdviceID = nil }
+                }.padding(16)
     }
     private func versionPicker(_ record: AppPhotoRecord) -> some View {
         VStack(alignment: .leading, spacing: 8) {

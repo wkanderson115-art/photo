@@ -37,6 +37,7 @@ struct CaptureView: View {
     @State private var showZoomControl = false
     @State private var pinchStartZoom: CGFloat?
     @State private var sliderZoom: Double?
+    @State private var manualZoomText = "1.00"
     @AppStorage("portraitDepth") private var portraitDepth = false
     @State private var showingSettings = false
     @AppStorage("autoZoom") private var autoZoom = true
@@ -81,7 +82,13 @@ struct CaptureView: View {
     @State private var thumbnailTask: Task<Void, Never>?
 
 
-    private var previewAspect: CGFloat { max(0.5, min(1, analyzer.frameAspectRatio)) }
+    private var previewAspect: CGFloat { CaptureLayout.previewAspect(frameAspect: analyzer.frameAspectRatio, landscape: false) }
+    private var landscapePreviewAspect: CGFloat { CaptureLayout.previewAspect(frameAspect: analyzer.frameAspectRatio, landscape: true) }
+    private var activeCaptureAspect: CGFloat {
+        CaptureLayout.photoAspect(landscape: camera.isLandscapeCapture)
+    }
+    /// Only the camera itself may rotate; settings and review stay portrait.
+    private var allowsRotation: Bool { isSelected && !showReview && !showingSettings }
     private var effectiveScene: String { autoScene ? analyzer.detectedScene : manualScene }
     private var effectiveFilter: PhotoFilter {
         guard autoFilter else { return manualFilter }
@@ -116,109 +123,268 @@ struct CaptureView: View {
         return grade
     }
 
-    var body: some View {
+    // MARK: - 布局：竖屏与横屏共用同一批子视图
+
+    private var topBar: some View {
+        HStack {
+            Menu {
+                Button("图库") { onNavigate(1) }
+                Button("摄影学院") { onNavigate(2) }
+                Button("全部设置") { onNavigate(3) }
+            } label: { Image(systemName: "square.grid.2x2").frame(width: 44, height: 44) }
+            Button { camera.requestedFlash.toggle() } label: {
+                Image(systemName: camera.requestedFlash ? "bolt.fill" : "bolt.slash").frame(width: 44, height: 44)
+            }.accessibilityLabel("拍照闪光灯").disabled(!camera.flashAvailable)
+            Spacer()
+            Button { camera.switchCamera() } label: { Image(systemName: "arrow.triangle.2.circlepath.camera").frame(width: 44, height: 44) }
+
+            Button { showingSettings = true } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 20)).frame(width: 44, height: 44)
+            }.accessibilityLabel("拍摄设置").foregroundStyle(.white)
+                .disabled(activeRenders > 0)
+        }.padding(.horizontal, 16)
+    }
+
+    private func previewView(width: CGFloat, height: CGFloat) -> some View {
+        CameraPreview(camera: camera, options: currentRenderOptions(), effectsEnabled: !comparingOriginal && (realtimeEffects || liveBeauty || effectiveFilter != .natural || (directorBlur && autoDirector)),
+                      autoFocusPoint: autoDirector && !camera.focusExposureLocked && Date().timeIntervalSince(analyzer.visionEvidenceAt) < 0.8 ? (targetSelected && analyzer.subject.rect != .zero ? CGPoint(x: analyzer.subject.rect.midX, y: analyzer.subject.rect.midY) : analyzer.visionEvidence.focusPoint) : nil,
+                      focusObservationTick: analyzer.observationTick,
+                      onSubjectTap: { point, locked in
+                          targetSelected = true; selectedPoint = point; analyzer.selectSubject(at: point)
+                          camera.setFocusExposureLock(locked)
+                          readySince = nil
+                      })
+            .frame(width: width, height: height)
+            .simultaneousGesture(
+                MagnificationGesture()
+                    .onChanged { scale in
+                        if pinchStartZoom == nil { pinchStartZoom = camera.zoom }
+                        lastManualZoom = Date()
+                        autoZoom = false
+                        camera.setZoom((pinchStartZoom ?? camera.zoom) * scale)
+                    }
+                    .onEnded { _ in pinchStartZoom = nil }
+            )
+            .overlay {
+                CompositionOverlay(showGrid: showGrid,
+                                   automaticFraming: autoComposition && autoDirector,
+                                   subject: analyzer.subject,
+                                   composition: directorComposition,
+                                   locked: analyzer.autoCaptureReady && camera.controlsSettled && analyzer.visionEvidence.eyes != "closed")
+            }
+            .overlay {
+                GeometryReader { proxy in
+                    if targetSelected {
+                        HStack(spacing: 4) {
+                            Image(systemName: "sun.max.fill")
+                            Slider(value: $exposureAdjustment, in: -2...2)
+                                .frame(width: 95)
+                                .onChange(of: exposureAdjustment) { _, value in camera.setUserExposure(Float(value)); readySince = nil }
+                        }.foregroundStyle(.yellow)
+                            .frame(width: 120)
+                            .position(x: max(70, min(proxy.size.width - 70, selectedPoint.x * proxy.size.width)),
+                                      y: max(35, min(proxy.size.height - 70, (1 - selectedPoint.y) * proxy.size.height + 45)))
+                    }
+                    if abs(analyzer.horizonAngle) > 0.03 && autoComposition {
+                        Capsule().fill(.white.opacity(0.65)).frame(width: 70, height: 2)
+                            .rotationEffect(.radians(-analyzer.horizonAngle))
+                            .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
+                            .allowsHitTesting(false)
+                    }
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if autoDirector && !quietDirector {
+                    HStack(spacing: 6) {
+                        if guidanceText.contains("向左") { Image(systemName: "arrow.left") }
+                        else if guidanceText.contains("向右") { Image(systemName: "arrow.right") }
+                        else if guidanceText.contains("后退") { Image(systemName: "arrow.down") }
+                        Text(guidanceText)
+                    }
+                        .font(.caption.weight(.medium)).foregroundStyle(.white)
+                        .padding(8).background(.black.opacity(0.55), in: Capsule())
+                        .padding(12).allowsHitTesting(false)
+                }
+            }
+    }
+
+    private var intentPicker: some View {
+        Picker("拍摄意图", selection: $directorFraming) {
+            ForEach(["自动", "环境", "完整人物", "半身", "特写", "合影", "运动", "突出主体"], id: \.self) { Text($0).tag($0) }
+        }.tint(.white)
+    }
+
+    /// Keep the choice visible while framing; the sheet remains for beauty and advanced controls.
+    private func inlineFilters(compact: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Label("滤镜", systemImage: "camera.filters")
+                    .font(.caption.weight(.semibold))
+                Spacer(minLength: 4)
+                Menu {
+                    ForEach(FilterGroup.allCases) { group in
+                        Button(group.rawValue) { filterGroup = group }
+                    }
+                } label: {
+                    Label(filterGroup.rawValue, systemImage: "chevron.down")
+                        .font(.caption)
+                }
+                Button("更多效果") { autoPaused = true; showingEffects = true }
+                    .font(.caption)
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    filterChoice("自动", icon: "sparkles", selected: autoFilter) {
+                        autoFilter = true; readySince = nil
+                    }
+                    ForEach(PhotoFilter.filters(in: filterGroup)) { filter in
+                        filterChoice(filter.rawValue, icon: filter.icon,
+                                     selected: !autoFilter && manualFilter == filter) {
+                            autoFilter = false
+                            manualFilterName = filter.rawValue
+                            readySince = nil
+                        }
+                    }
+                }
+                .padding(.horizontal, 2)
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, compact ? 8 : 16)
+        .padding(.vertical, 8)
+        .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 16))
+        .padding(.horizontal, compact ? 0 : 16)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("拍照滤镜")
+    }
+
+    private func filterChoice(_ title: String, icon: String, selected: Bool,
+                              action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 3) {
+                Image(systemName: icon).font(.system(size: 17))
+                Text(title).font(.system(size: 11, weight: selected ? .semibold : .regular))
+                    .lineLimit(1)
+            }
+            .frame(minWidth: 54, minHeight: 42)
+            .padding(.horizontal, 5)
+            .background(selected ? Color.mint.opacity(0.36) : Color.white.opacity(0.08),
+                        in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10)
+                .stroke(selected ? Color.mint : .clear, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    @ViewBuilder private func intentRow(compact: Bool) -> some View {
+        if compact {
+            VStack(alignment: .leading, spacing: 6) {
+                intentPicker
+                HStack {
+                    Spacer()
+                    Button(quietDirector ? "显示引导" : "安静") { quietDirector.toggle() }
+                }
+            }.font(.caption).foregroundStyle(.white).padding(.horizontal, 4)
+        } else {
+            HStack {
+                intentPicker
+                Spacer()
+                Button(quietDirector ? "显示引导" : "安静") { quietDirector.toggle() }
+            }.font(.caption).foregroundStyle(.white).padding(.horizontal, 20)
+        }
+    }
+
+    @ViewBuilder private func selectedRow(compact: Bool) -> some View {
+        if compact && targetSelected {
+            VStack(spacing: 6) {
+                HStack {
+                    Text(camera.focusExposureLocked ? "主体与AE/AF锁定" : "已选择主体")
+                    Spacer()
+                    Button("恢复自动") { targetSelected = false; analyzer.selectSubject(at: nil); camera.setFocusExposureLock(false); camera.setUserExposure(nil); exposureAdjustment = 0; lastManualZoom = .distantPast }
+                }
+                HStack {
+                    Image(systemName: "sun.max")
+                    Slider(value: $exposureAdjustment, in: -2...2).onChange(of: exposureAdjustment) { _, value in camera.setUserExposure(Float(value)); readySince = nil }
+                }
+            }.font(.caption).foregroundStyle(.white).padding(.horizontal, 4)
+        } else {
+            if targetSelected {
+                HStack {
+                    Text(camera.focusExposureLocked ? "主体与AE/AF锁定" : "已选择主体")
+                    Button("恢复自动") { targetSelected = false; analyzer.selectSubject(at: nil); camera.setFocusExposureLock(false); camera.setUserExposure(nil); exposureAdjustment = 0; lastManualZoom = .distantPast }
+                    Image(systemName: "sun.max")
+                    Slider(value: $exposureAdjustment, in: -2...2).onChange(of: exposureAdjustment) { _, value in camera.setUserExposure(Float(value)); readySince = nil }
+                }.font(.caption).foregroundStyle(.white).padding(.horizontal, 20)
+        }
+        }
+    }
+
+    private func portraitLayout(_ geo: GeometryProxy) -> some View {
+        VStack(spacing: 12) {
+            topBar
+            Spacer(minLength: 0)
+            previewView(width: min(geo.size.width, max(120, geo.size.height - (showZoomControl ? 330 : 286)) * previewAspect),
+                        height: min(geo.size.width / previewAspect, max(160, geo.size.height - (showZoomControl ? 330 : 286))))
+            Spacer(minLength: 0)
+            inlineFilters(compact: false)
+            intentRow(compact: false)
+            selectedRow(compact: false)
+            controls(compact: false)
+                .padding(.bottom, 120) // Reserved for the independent shutter dock and system tab bar.
+        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Landscape: viewfinder on the left, one scrollable control column on the right.
+    private func landscapeLayout(_ geo: GeometryProxy) -> some View {
+        let sideWidth: CGFloat = 236
+        let available = CGSize(width: max(200, geo.size.width - sideWidth - 28),
+                               height: max(120, geo.size.height - 56))
+        let size = CaptureLayout.fit(aspect: landscapePreviewAspect, in: available)
+        return HStack(spacing: 12) {
+            VStack(spacing: 8) {
+                topBar
+                Spacer(minLength: 0)
+                previewView(width: size.width, height: size.height)
+                    .overlay(alignment: .topLeading) {
+                        Label("横拍 4:3 · 成片宽于高", systemImage: "rectangle.landscape")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(.black.opacity(0.58), in: Capsule())
+                            .padding(10)
+                            .allowsHitTesting(false)
+                    }
+                Spacer(minLength: 0)
+            }.frame(maxWidth: .infinity)
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 10) {
+                    inlineFilters(compact: true)
+                    intentRow(compact: true)
+                    selectedRow(compact: true)
+                    controls(compact: true)
+                }
+            }.frame(width: sideWidth)
+        }.frame(maxWidth: .infinity, maxHeight: .infinity).padding(.horizontal, 8)
+    }
+
+    private var captureBase: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             GeometryReader { geo in
-                VStack(spacing: 12) {
-                    HStack {
-                        Menu {
-                            Button("图库") { onNavigate(1) }
-                            Button("摄影学院") { onNavigate(2) }
-                            Button("全部设置") { onNavigate(3) }
-                        } label: { Image(systemName: "square.grid.2x2").frame(width: 44, height: 44) }
-                        Button { camera.requestedFlash.toggle() } label: {
-                            Image(systemName: camera.requestedFlash ? "bolt.fill" : "bolt.slash").frame(width: 44, height: 44)
-                        }.accessibilityLabel("拍照闪光灯").disabled(!camera.flashAvailable)
-                        Spacer()
-                        Button { camera.switchCamera() } label: { Image(systemName: "arrow.triangle.2.circlepath.camera").frame(width: 44, height: 44) }
-
-                        Button { showingSettings = true } label: {
-                            Image(systemName: "slider.horizontal.3")
-                                .font(.system(size: 20)).frame(width: 44, height: 44)
-                        }.accessibilityLabel("拍摄设置").foregroundStyle(.white)
-                            .disabled(activeRenders > 0)
-                    }.padding(.horizontal, 16)
-                    Spacer(minLength: 0)
-                    CameraPreview(camera: camera, options: currentRenderOptions(), effectsEnabled: !comparingOriginal && (realtimeEffects || liveBeauty || effectiveFilter != .natural || (directorBlur && autoDirector)),
-                                  autoFocusPoint: autoDirector && !camera.focusExposureLocked && Date().timeIntervalSince(analyzer.visionEvidenceAt) < 0.8 ? (targetSelected && analyzer.subject.rect != .zero ? CGPoint(x: analyzer.subject.rect.midX, y: analyzer.subject.rect.midY) : analyzer.visionEvidence.focusPoint) : nil,
-                                  focusObservationTick: analyzer.observationTick,
-                                  onSubjectTap: { point, locked in
-                                      targetSelected = true; selectedPoint = point; analyzer.selectSubject(at: point)
-                                      camera.setFocusExposureLock(locked)
-                                      readySince = nil
-                                  })
-                        .frame(width: min(geo.size.width, max(120, geo.size.height - (showZoomControl ? 244 : 200)) * previewAspect),
-                               height: min(geo.size.width / previewAspect, max(160, geo.size.height - (showZoomControl ? 244 : 200))))
-                        .simultaneousGesture(
-                            MagnificationGesture()
-                                .onChanged { scale in
-                                    if pinchStartZoom == nil { pinchStartZoom = camera.zoom }
-                                    lastManualZoom = Date()
-                                    camera.setZoom((pinchStartZoom ?? camera.zoom) * scale)
-                                }
-                                .onEnded { _ in pinchStartZoom = nil }
-                        )
-                        .overlay {
-                            CompositionOverlay(showGrid: showGrid,
-                                               automaticFraming: autoComposition && autoDirector,
-                                               subject: analyzer.subject,
-                                               composition: directorComposition,
-                                               locked: analyzer.autoCaptureReady && camera.controlsSettled && analyzer.visionEvidence.eyes != "closed")
-                        }
-                        .overlay {
-                            GeometryReader { proxy in
-                                if targetSelected {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "sun.max.fill")
-                                        Slider(value: $exposureAdjustment, in: -2...2)
-                                            .frame(width: 95)
-                                            .onChange(of: exposureAdjustment) { _, value in camera.setUserExposure(Float(value)); readySince = nil }
-                                    }.foregroundStyle(.yellow)
-                                        .frame(width: 120)
-                                        .position(x: max(70, min(proxy.size.width - 70, selectedPoint.x * proxy.size.width)),
-                                                  y: max(35, min(proxy.size.height - 70, (1 - selectedPoint.y) * proxy.size.height + 45)))
-                                }
-                                if abs(analyzer.horizonAngle) > 0.03 && autoComposition {
-                                    Capsule().fill(.white.opacity(0.65)).frame(width: 70, height: 2)
-                                        .rotationEffect(.radians(-analyzer.horizonAngle))
-                                        .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
-                                        .allowsHitTesting(false)
-                                }
-                            }
-                        }
-                        .overlay(alignment: .bottom) {
-                            if autoDirector && !quietDirector {
-                                HStack(spacing: 6) {
-                                    if guidanceText.contains("向左") { Image(systemName: "arrow.left") }
-                                    else if guidanceText.contains("向右") { Image(systemName: "arrow.right") }
-                                    else if guidanceText.contains("后退") { Image(systemName: "arrow.down") }
-                                    Text(guidanceText)
-                                }
-                                    .font(.caption.weight(.medium)).foregroundStyle(.white)
-                                    .padding(8).background(.black.opacity(0.55), in: Capsule())
-                                    .padding(12).allowsHitTesting(false)
-                            }
-                        }
-                    Spacer(minLength: 0)
-                    HStack {
-                        Picker("拍摄意图", selection: $directorFraming) {
-                            ForEach(["自动", "环境", "完整人物", "半身", "特写", "合影", "运动", "突出主体"], id: \.self) { Text($0).tag($0) }
-                        }.tint(.white)
-                        Spacer()
-                        Button("效果") { autoPaused = true; showingEffects = true }
-                        Button(quietDirector ? "显示引导" : "安静") { quietDirector.toggle() }
-                    }.font(.caption).foregroundStyle(.white).padding(.horizontal, 20)
-                    if targetSelected {
-                        HStack {
-                            Text(camera.focusExposureLocked ? "主体与AE/AF锁定" : "已选择主体")
-                            Button("恢复自动") { targetSelected = false; analyzer.selectSubject(at: nil); camera.setFocusExposureLock(false); camera.setUserExposure(nil); exposureAdjustment = 0; lastManualZoom = .distantPast }
-                            Image(systemName: "sun.max")
-                            Slider(value: $exposureAdjustment, in: -2...2).onChange(of: exposureAdjustment) { _, value in camera.setUserExposure(Float(value)); readySince = nil }
-                        }.font(.caption).foregroundStyle(.white).padding(.horizontal, 20)
+                if CaptureLayout.isLandscape(geo.size) { landscapeLayout(geo) } else { portraitLayout(geo) }
+            }
+            GeometryReader { geo in
+                if !CaptureLayout.isLandscape(geo.size) {
+                    VStack {
+                        Spacer(minLength: 0)
+                        fixedPortraitShutterDock
+                            .padding(.bottom, 86) // Keep clear of the system TabView bar.
                     }
-                    controls
-                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
 
             if let toast {
@@ -256,11 +422,19 @@ struct CaptureView: View {
             }
         }
         .sheet(isPresented: $showingEffects) { effectsPanel }
+        .onChange(of: allowsRotation, initial: true) { _, allowed in
+            OrientationPolicy.apply(allowed ? .allButUpsideDown : .portrait)
+        }
         .sheet(isPresented: $showingSettings) {
             SettingsView(isPresentedModally: true).preferredColorScheme(.light)
         }
+    }
+
+    private var captureLifecycle: some View {
+        captureBase
         .onAppear {
             guard self.isSelected else { return }
+            OrientationPolicy.apply(allowsRotation ? .allButUpsideDown : .portrait)
             self.camera.setDepthDelivery(self.portraitDepth)
             self.camera.setHighQualityMode(self.highQuality)
             self.camera.start()
@@ -269,6 +443,7 @@ struct CaptureView: View {
             self.analyzer.setPeriod(self.location.periodText)
         }
         .onDisappear {
+            OrientationPolicy.apply(.portrait)
             comparingOriginal = false
             self.camera.stop()
             self.motion.stop()
@@ -307,6 +482,10 @@ struct CaptureView: View {
                 camera.stop()
             } else if isSelected && scenePhase == .active { camera.start() }
         }
+    }
+
+    var body: some View {
+        captureLifecycle
         .onChange(of: camera.photoToken) { _, _ in
             self.processLatestPhoto()
         }
@@ -469,32 +648,63 @@ struct CaptureView: View {
     }
 
     // MARK: - 拍摄操作。配置与已开启状态全部留在设置页。
-    private var controls: some View {
+    private func controls(compact: Bool) -> some View {
         VStack(spacing: 12) {
-            if showZoomControl && camera.maximumZoom > camera.minimumZoom {
+            HStack(spacing: 12) {
+                Text("变焦模式").font(.caption)
+                Picker("变焦模式", selection: $autoZoom) {
+                    Text("手动").tag(false)
+                    Text("自动").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: autoZoom) { _, enabled in
+                    if enabled { lastManualZoom = .distantPast; directorController.reset() }
+                    else { lastManualZoom = Date(); manualZoomText = String(format: "%.2f", Double(camera.zoom)) }
+                }
+            }.padding(.horizontal, compact ? 6 : 24)
+            if !autoZoom && camera.maximumZoom > camera.minimumZoom {
                 HStack(spacing: 12) {
                     Text(String(format: "%g×", Double(camera.minimumZoom))).font(.caption2)
                     Slider(value: Binding(
                         get: { log(max(Double(camera.minimumZoom), min(Double(camera.maximumZoom), sliderZoom ?? Double(camera.zoom)))) },
                         set: { value in
-                            let target = exp(value)
+                            let target = min(100, max(Double(camera.minimumZoom), min(Double(camera.maximumZoom), (exp(value) * 100).rounded() / 100)))
                             sliderZoom = target
+                            manualZoomText = String(format: "%.2f", target)
                             lastManualZoom = Date()
                             camera.setZoom(CGFloat(target))
                         }),
                            in: log(Double(camera.minimumZoom))...log(Double(camera.maximumZoom)),
                            onEditingChanged: { editing in if !editing { sliderZoom = nil } })
                         .accessibilityLabel("连续变焦")
-                        .accessibilityValue(String(format: "%.1f倍", Double(camera.zoom)))
+                        .accessibilityValue(String(format: "%.2f倍", Double(camera.zoom)))
                     Text(String(format: "%g×", Double(camera.maximumZoom))).font(.caption2)
-                }.padding(.horizontal, 24)
+                }.padding(.horizontal, compact ? 6 : 24)
+                HStack(spacing: 10) {
+                    Text("倍率").font(.caption)
+                    TextField("1.00", text: $manualZoomText)
+                        .keyboardType(.decimalPad)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 90)
+                        .accessibilityLabel("输入手动变焦倍率，精确到0.01倍")
+                    Button("应用") {
+                        guard let entered = Double(manualZoomText), entered.isFinite else { return }
+                        let target = min(100, max(Double(camera.minimumZoom), min(Double(camera.maximumZoom), (entered * 100).rounded() / 100)))
+                        manualZoomText = String(format: "%.2f", target)
+                        lastManualZoom = Date()
+                        camera.setZoom(CGFloat(target))
+                    }
+                    .buttonStyle(.bordered)
+                    Text("上限 " + String(format: "%.2f×", min(100, Double(camera.maximumZoom))))
+                        .font(.caption2).foregroundStyle(.secondary)
+                }.padding(.horizontal, compact ? 6 : 24)
             }
             HStack {
                 Text("效果前预览").font(.caption).padding(8).background(.white.opacity(0.12), in: Capsule())
                     .onLongPressGesture(minimumDuration: 0, pressing: { pressing in comparingOriginal = pressing; if pressing { readySince = nil } }, perform: {})
                     .accessibilityLabel("按住查看效果前预览")
                 if lastManualZoom != .distantPast {
-                    Button("恢复自动变焦") { lastManualZoom = .distantPast; directorController.reset() }
+                    Button("恢复自动变焦") { autoZoom = true; lastManualZoom = .distantPast; directorController.reset() }
                 }
             }
             HStack(spacing: 10) {
@@ -502,7 +712,9 @@ struct CaptureView: View {
                     HStack(spacing: 8) {
                         ForEach(camera.availableZooms.filter { $0 <= max(2, camera.nativeMaximumZoom) }, id: \.self) { value in
                             Button {
+                                autoZoom = false
                                 lastManualZoom = Date()
+                                manualZoomText = String(format: "%.2f", Double(value))
                                 camera.setZoom(value)
                             } label: {
                                 Text(String(format: "%g×", Double(value)))
@@ -515,13 +727,45 @@ struct CaptureView: View {
                     }
                 }
                 Button { showZoomControl.toggle() } label: {
-                    Text(String(format: "%.1f×", Double(camera.zoom)))
+                    Text(String(format: "%.2f×", Double(camera.zoom)))
                         .font(.system(size: 14, weight: .semibold, design: .monospaced))
                         .frame(minWidth: 56, minHeight: 36)
                         .background(Color.white.opacity(0.12), in: Capsule())
-                }.accessibilityLabel("展开或收起连续变焦滑杆")
+                }.accessibilityLabel("显示或隐藏变焦控制")
                     .disabled(camera.maximumZoom <= camera.minimumZoom)
-            }.padding(.horizontal, 24)
+            }.padding(.horizontal, compact ? 6 : 24)
+            if compact {
+            HStack {
+                Button {
+                    if let shot = reviewShot, reviewStyled != nil { reviewShot = shot; showReview = true }
+                    else { onNavigate(1) }
+                } label: {
+                    if let image = reviewStyled { Image(uiImage: image).resizable().scaledToFill().frame(width: 48, height: 48).clipped().clipShape(RoundedRectangle(cornerRadius: 9)) }
+                    else { Image(systemName: "photo").frame(width: 48, height: 48) }
+                }.accessibilityLabel("最近照片与图库")
+                Spacer()
+                Button { takePhoto() } label: {
+                    ZStack {
+                        Circle().stroke(.white, lineWidth: 3).frame(width: 76, height: 76)
+                        Circle().fill(.white).frame(width: 64, height: 64)
+                        if activeRenders > 0 { ProgressView().tint(.black) }
+                    }
+                }.accessibilityLabel("拍照")
+                    .disabled(!camera.isRunning || activeRenders > 0)
+                Spacer()
+                Button { if !autoCapture { autoCapture = true; autoPaused = false } else { autoPaused.toggle() }; readySince = nil } label: {
+                    Image(systemName: autoPaused || !autoCapture ? "play.circle" : "pause.circle")
+                        .font(.system(size: 28)).frame(width: 48, height: 48)
+                }.accessibilityLabel(autoPaused ? "恢复自动拍摄" : "暂停自动拍摄")
+            }.padding(.horizontal, compact ? 10 : 36)
+            }
+        }.foregroundStyle(.white).padding(.bottom, 12)
+    }
+
+
+    /// Portrait shutter is anchored above the system tab bar and never scrolls with zoom controls.
+    private var fixedPortraitShutterDock: some View {
+        VStack(spacing: 0) {
             HStack {
                 Button {
                     if let shot = reviewShot, reviewStyled != nil { reviewShot = shot; showReview = true }
@@ -545,7 +789,12 @@ struct CaptureView: View {
                         .font(.system(size: 28)).frame(width: 48, height: 48)
                 }.accessibilityLabel(autoPaused ? "恢复自动拍摄" : "暂停自动拍摄")
             }.padding(.horizontal, 36)
-        }.foregroundStyle(.white).padding(.bottom, 12)
+        }
+        .foregroundStyle(.white)
+        .padding(.vertical, 10)
+        .background(.black.opacity(0.94), in: RoundedRectangle(cornerRadius: 24))
+        .padding(.horizontal, 22)
+        .accessibilityElement(children: .contain)
     }
 
     // MARK: - 拍照结果处理（全部在后台渲染）
@@ -557,15 +806,23 @@ struct CaptureView: View {
 
         self.activeRenders += 1
 
-        let options = captureOptions ?? currentRenderOptions()
+        var preparedOptions = captureOptions ?? currentRenderOptions()
         captureOptions = nil
+        // The output must follow the actual captured photo, not the UI geometry
+        // from a frame just before rotation.  This is the fix that prevents a
+        // horizontal original from being cropped back to a 3:4 local version.
+        let capturedAspect = Double(shot.displayAspect)
+        if capturedAspect.isFinite, capturedAspect > 0 {
+            preparedOptions.outputAspect = min(2, max(0.5, capturedAspect))
+        }
         let exposure = analyzer.qualityExposure
         let composition = analyzer.compositionScore
         let sharpness = analyzer.qualitySharpness
         let keepsOriginal = saveBoth
         let depthStrength = min(1, max(0, directorBlurStrength))
-        let useMatteDepth = shot.depthMask != nil && options.directorEvidence.contains { $0.domain == "自动景深" }
-        if useMatteDepth { options.backgroundBlur = 0 }
+        let useMatteDepth = shot.depthMask != nil && preparedOptions.directorEvidence.contains { $0.domain == "自动景深" }
+        if useMatteDepth { preparedOptions.backgroundBlur = 0 }
+        let options = preparedOptions
 
         DispatchQueue.global(qos: .userInitiated).async {
             let rendered = PhotoPostProcessor.render(original: shot.image, options: options)
@@ -607,7 +864,7 @@ struct CaptureView: View {
                               styledImage: styled,
                               keepOriginal: keepsOriginal, photoID: shot.id) { success in
             if success {
-                self.showToast("已保存到图库")
+                self.showToast(shot.isLandscape ? "横拍 4:3 已保存到图库" : "竖拍 3:4 已保存到图库")
             } else {
                 self.showToast("保存失败：\(self.library.lastSaveError ?? "未知错误")")
             }
@@ -633,7 +890,7 @@ struct CaptureView: View {
     private func currentRenderOptions() -> PhotoRenderOptions {
         PhotoRenderOptions(filter: effectiveFilter, grade: effectiveGrade,
                            style: compositionStyle, beauty: liveBeauty ? BeautyPreset(intensity: liveBeautyStrength).settings(mode: liveBeautyMode) : nil,
-                           outputAspect: Double(previewAspect),
+                           outputAspect: Double(activeCaptureAspect),
                            filterStrength: autoDirector && autoFilter ? min(filterStrength, analyzer.directorDecision.maximumFilterStrength) : filterStrength,
                            backgroundBlur: directorBlur && autoDirector && analyzer.directorObservation.personCount == 1 && ["半身", "特写", "突出主体"].contains(directorFraming) ? directorBlurStrength : 0,
                            directorContext: autoDirector ? analyzer.directorDecision.context : nil,
@@ -648,6 +905,7 @@ struct CaptureView: View {
             options.directorEvidence.append(DirectorEvidence(domain: "自动景深", rule: "单人突出主体", observation: "请求轻度背景分离", action: "仅当成片存在人物遮罩时轻度虚化；缺少遮罩时保留原景"))
         }
         options.directorEvidence.append(DirectorEvidence(domain: "设备执行", rule: "实际控制状态", observation: camera.exposureText + String(format: " · %.2f×", Double(camera.zoom)), action: camera.controlsSettled ? "系统对焦、曝光与变焦已稳定" : "本次为手动快门或控制尚未稳定"))
+        options.directorEvidence.append(DirectorEvidence(domain: "画幅方向", rule: "照片随设备方向输出", observation: camera.orientationLabel, action: camera.isLandscapeCapture ? "保存横向 4:3 成片（宽大于高）" : "保存竖向 3:4 成片（高大于宽）"))
         captureOptions = options
         camera.capture()
     }

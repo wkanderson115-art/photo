@@ -19,7 +19,7 @@ struct CommercialRetouchView: View {
     @State private var fusedResult: UIImage?
     @State private var allowPaidCall = false
     @State private var aiCalls = 0
-    @State private var presetID = "p02"
+    @State private var presetID = "p25"
     @State private var engine: RetouchEngineChoice = .dual
     @State private var suggestion = "选择照片后，使用 Vision 推荐预设；可随时更改。"
     @State private var status = ""
@@ -60,8 +60,9 @@ struct CommercialRetouchView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("全场景商业精修").font(.title2.bold())
-                    Text("20 类 · 80 预设 · 三个独立入口 · 原图保护").font(.caption).foregroundStyle(.secondary)
+                    Text("单张精修").font(.title2.bold()).foregroundStyle(AppTheme.ink)
+                    Text("先选照片，再确认场景预设和处理方式；原图始终保留。")
+                        .font(.subheadline).foregroundStyle(AppTheme.muted)
                     PhotosPicker(selection: $picker, matching: .images) {
                         Label("选择照片并智能识别", systemImage: "photo.badge.plus")
                             .frame(maxWidth: .infinity).padding(14)
@@ -110,8 +111,12 @@ struct CommercialRetouchView: View {
                     }
 
                     Picker("精修引擎", selection: $engine) {
-                        ForEach(RetouchEngineChoice.allCases) { mode in Text(mode.rawValue).tag(mode) }
+                        ForEach(RetouchEngineChoice.allCases) { mode in
+                            Text(mode == .local ? "本地" : mode == .seedream ? "AI" : "双引擎").tag(mode)
+                        }
                     }.pickerStyle(.segmented)
+                    Text("当前模式：\(engine.rawValue)")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(AppTheme.ink)
                     Text(engine == .dual ? "双引擎安全模式：先保存本地版；AI 不会自动覆盖或伪装为已融合。" : engine == .seedream ? "Seedream 使用现有图库中的独立云端修图入口。" : "仅在本机执行，无 API 费用。")
                         .font(.caption).foregroundStyle(.secondary)
                     Button("执行本地精修并独立保存") { runLocal() }

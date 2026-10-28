@@ -154,8 +154,9 @@ final class RetouchBatchRunner: ObservableObject {
             if Task.isCancelled { break }
 
             guard let analysis = analysis else {
-                photo.status = .failed
-                photo.errorMessage = "分析失败：没有检测到可用的人脸/肤色区域，请换一张正面清晰的照片，或单张手动精修"
+                // 风景、建筑、宠物和夜景不需要人脸分析；跳过肤色锚点即可继续精修。
+                if photo.status != .processed && photo.status != .approved { photo.status = .pending }
+                photo.errorMessage = nil
                 completed += 1
                 job.progress = progressValue()
                 continue
@@ -176,9 +177,8 @@ final class RetouchBatchRunner: ObservableObject {
         if !Task.isCancelled {
             let anchor = ShootAnchor.build(from: collected)
             job.anchor = anchor
-            if anchor == nil {
-                job.lastError = "整批无法建立统一基准：没有一张照片能解析出可靠肤色，请检查素材或单张处理"
-            }
+            // 无人脸批次使用独立照片色调处理；不阻止后续精修。
+            if anchor == nil { job.lastError = nil }
         }
 
         completed = min(completed, total)
@@ -218,12 +218,6 @@ final class RetouchBatchRunner: ObservableObject {
             await performPrepare(job)
         }
         if Task.isCancelled {
-            isRunning = false
-            job.isRunning = false
-            phase = "已完成"
-            return
-        }
-        guard job.anchor != nil else {
             isRunning = false
             job.isRunning = false
             phase = "已完成"
@@ -297,12 +291,6 @@ final class RetouchBatchRunner: ObservableObject {
             await performPrepare(job)
         }
         if Task.isCancelled {
-            isRunning = false
-            job.isRunning = false
-            phase = "已完成"
-            return
-        }
-        guard job.anchor != nil else {
             isRunning = false
             job.isRunning = false
             phase = "已完成"

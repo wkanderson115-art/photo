@@ -14,6 +14,14 @@ private enum StudioShared {
     static let store = RetouchVersionStore()
 }
 
+private func suggestedStudioPresetID(for data: Data) async -> String {
+    await Task.detached(priority: .userInitiated) {
+        guard let image = UIImage(data: data) else { return "p25" }
+        let (preset, _) = await RetouchPipeline().suggestPreset(image: image)
+        return preset.id
+    }.value
+}
+
 private let studioJobFormatter: DateFormatter = {
     let formatter = DateFormatter()
     formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -120,7 +128,7 @@ struct RetouchStudioView: View {
     @StateObject private var runner: RetouchBatchRunner
 
     @State private var pickerItems: [PhotosPickerItem] = []
-    @State private var presetID: String = "p02"
+    @State private var presetID: String = "auto"
     @State private var strength: Double = 1.0
     @State private var jobID: UUID?
     @State private var loadedCount: Int = 0
@@ -140,9 +148,36 @@ struct RetouchStudioView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("导入今天的客片 → 分析锚点 → 精修 → 审核 → 导出交付包")
-                        .font(.caption)
-                        .foregroundStyle(AppTheme.muted)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("为每张照片找到合适的精修")
+                            .font(.title3.weight(.bold))
+                        Text("导入照片后按场景选预设，精修完成再逐张审核。原图始终保留。")
+                            .font(.subheadline)
+                            .foregroundStyle(AppTheme.muted)
+                    }
+                    studioSteps
+
+                    NavigationLink {
+                        CommercialRetouchView()
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "square.stack.3d.up.fill")
+                                .font(.title3)
+                                .frame(width: 42, height: 42)
+                                .background(AppTheme.mint, in: RoundedRectangle(cornerRadius: 12))
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("单张双引擎精修").font(.headline)
+                                Text("本地调节 + Seedream AI · 融合结果需人工审核")
+                                    .font(.caption).foregroundStyle(AppTheme.muted)
+                            }
+                            Spacer(minLength: 4)
+                            Image(systemName: "chevron.right").font(.caption)
+                        }
+                        .foregroundStyle(AppTheme.ink)
+                        .appCard(tinted: true)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("打开单张双引擎精修")
 
                     importCard
 
@@ -163,18 +198,8 @@ struct RetouchStudioView: View {
                 .padding(18)
             }
             .background(AppTheme.paper)
-            .navigationTitle("影楼精修台")
+            .navigationTitle("精修工作台")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    NavigationLink {
-                        CommercialRetouchView()
-                    } label: {
-                        Image(systemName: "person.crop.square")
-                    }
-                    .accessibilityLabel("单张精修与 AI 融合")
-                }
-            }
             .onChange(of: pickerItems) { newItems in
                 importSelection(newItems)
             }
@@ -196,15 +221,31 @@ struct RetouchStudioView: View {
 
     // MARK: Import
 
+    private var studioSteps: some View {
+        HStack(spacing: 6) {
+            ForEach(["1 导入", "2 精修", "3 审核", "4 交付"], id: \.self) { step in
+                Text(step)
+                    .font(.caption2.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .background(AppTheme.soft, in: Capsule())
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
     private var importCard: some View {
         VStack(alignment: .leading, spacing: 10) {
+            Text("照片").font(.headline)
             PhotosPicker(selection: $pickerItems, maxSelectionCount: 60, matching: .images) {
-                Label("导入客片（最多 60 张）", systemImage: "photo.badge.plus")
+                Label("选择照片", systemImage: "photo.badge.plus")
                     .frame(maxWidth: .infinity)
                     .padding(14)
             }
             .buttonStyle(.borderedProminent)
             .disabled(runner.isRunning || isImporting)
+            Text("最多 60 张；每张独立识别风景、夜景、建筑或人物。")
+                .font(.caption).foregroundStyle(AppTheme.muted)
 
             if isImporting {
                 ProgressView(importMessage.isEmpty ? "正在读取照片…" : importMessage)
@@ -245,7 +286,8 @@ struct RetouchStudioView: View {
                        CGImageSourceGetCount(source) > 0 {
                         let photo = BatchPhoto(fileName: String(format: "IMG_%03d.jpg", index),
                                                originalData: data)
-                        photo.adjustments.presetID = preset
+                        photo.adjustments.presetID = preset == "auto"
+                            ? await suggestedStudioPresetID(for: data) : preset
                         photo.adjustments.strength = level
                         photos.append(photo)
                     } else {
@@ -324,7 +366,9 @@ private struct StudioActionBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Picker("预设", selection: $presetID) {
+            Text("精修方案").font(.headline)
+            Picker("场景与预设", selection: $presetID) {
+                Text("自动识别每张照片").tag("auto")
                 ForEach(RetouchPresetCatalog.categories, id: \.self) { category in
                     Section(category) {
                         ForEach(RetouchPresetCatalog.presets(for: category)) { preset in
@@ -336,7 +380,9 @@ private struct StudioActionBar: View {
             .pickerStyle(.menu)
             .disabled(runner.isRunning)
 
-            Text("当前预设：\(RetouchPresetCatalog.find(presetID).name) · \(RetouchPresetCatalog.find(presetID).look.displayName)")
+            Text(presetID == "auto"
+                 ? "自动模式：逐张识别场景；可手动选择风景、夜景、建筑、人像等预设"
+                 : "当前预设：\(RetouchPresetCatalog.find(presetID).category) · \(RetouchPresetCatalog.find(presetID).name)")
                 .font(.caption)
                 .foregroundStyle(AppTheme.muted)
 
@@ -356,27 +402,24 @@ private struct StudioActionBar: View {
                     .foregroundStyle(AppTheme.muted)
             }
 
-            HStack(spacing: 10) {
-                Button("开始分析") {
-                    Task { await runner.prepare(job) }
-                }
-                .buttonStyle(AppActionStyle())
-                .disabled(runner.isRunning || job.pendingCount == 0)
-
+            VStack(spacing: 8) {
                 Button("开始精修") {
                     Task { await runner.process(job) }
                 }
                 .buttonStyle(AppActionStyle())
                 .disabled(runner.isRunning || job.photos.isEmpty)
-
-                Button("取消") {
-                    runner.cancel()
+                .frame(maxWidth: .infinity)
+                HStack {
+                    Button("仅分析") { Task { await runner.prepare(job) } }
+                        .disabled(runner.isRunning || job.pendingCount == 0)
+                    Spacer()
+                    Button("取消处理") { runner.cancel() }
+                        .disabled(!runner.isRunning)
                 }
-                .buttonStyle(AppActionStyle(primary: false))
-                .disabled(!runner.isRunning)
+                .font(.subheadline)
             }
 
-            Text("分析只读锚点与质检；精修按当前预设与强度逐张处理，原图始终保留。")
+            Text("“开始精修”会自动完成需要的分析；“仅分析”不会生成成片。")
                 .font(.caption)
                 .foregroundStyle(AppTheme.muted)
         }
@@ -385,14 +428,25 @@ private struct StudioActionBar: View {
             applyToPending(preset: newValue, level: strength)
         }
         .onChange(of: strength) { newValue in
-            applyToPending(preset: presetID, level: newValue)
+            for photo in job.photos where photo.status == .pending {
+                photo.adjustments.strength = newValue
+            }
         }
     }
 
     private func applyToPending(preset: String, level: Double) {
         for photo in job.photos where photo.status == .pending {
-            photo.adjustments.presetID = preset
             photo.adjustments.strength = level
+            if preset == "auto" {
+                Task {
+                    let suggested = await suggestedStudioPresetID(for: photo.originalData)
+                    if presetID == "auto" && photo.status == .pending {
+                        photo.adjustments.presetID = suggested
+                    }
+                }
+            } else {
+                photo.adjustments.presetID = preset
+            }
         }
     }
 }
@@ -468,6 +522,11 @@ private struct StudioPhotoGrid: View {
                     cell(photo: photo, index: index + 1)
                 }
             }
+            ForEach(job.photos.filter { $0.status == .failed }, id: \.id) { photo in
+                Text("\(photo.fileName)：\(photo.errorMessage ?? "精修失败，原因未知")")
+                    .font(.caption).foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             Text("点开审核；长按可直接通过、淘汰或重试。").font(.caption).foregroundStyle(AppTheme.muted)
         }
         .appCard()
@@ -481,6 +540,7 @@ private struct StudioPhotoGrid: View {
         Button {
             selectedPhoto = photo
         } label: {
+            VStack(spacing: 3) {
             ZStack(alignment: .topLeading) {
                 StudioThumbnail(photo: photo)
                     .frame(height: 92)
@@ -502,6 +562,11 @@ private struct StudioPhotoGrid: View {
                     .padding(.vertical, 2)
                     .background(studioStatusColor(photo.status), in: Capsule())
                     .padding(4)
+            }
+            Text(RetouchPresetCatalog.find(photo.adjustments.presetID).name)
+                .font(.system(size: 10))
+                .lineLimit(1)
+                .foregroundStyle(AppTheme.muted)
             }
         }
         .buttonStyle(.plain)
@@ -743,12 +808,25 @@ private struct RetouchReviewSheet: View {
                 }
             }
 
+            Picker("精修类型", selection: $photo.adjustments.presetID) {
+                ForEach(RetouchPresetCatalog.categories, id: \.self) { category in
+                    Section(category) {
+                        ForEach(RetouchPresetCatalog.presets(for: category)) { preset in
+                            Text(preset.name).tag(preset.id)
+                        }
+                    }
+                }
+            }
+            .pickerStyle(.menu)
+
             valueSlider("精修强度",
                         value: $photo.adjustments.strength,
                         range: 0.4...1.3,
                         step: 0.05,
                         hint: nil)
 
+            if ["人像摄影", "婚纱与情侣", "家庭与儿童", "时尚与穿搭"].contains(
+                RetouchPresetCatalog.find(photo.adjustments.presetID).category) {
             HStack {
                 Text("液化").font(.subheadline.weight(.semibold))
                 Spacer()
@@ -766,6 +844,7 @@ private struct RetouchReviewSheet: View {
             valueSlider("脖子", value: $photo.adjustments.reshape.neckThin, range: 0...1, step: 0.05, hint: nil)
             valueSlider("收腰", value: $photo.adjustments.reshape.waist, range: 0...1, step: 0.05, hint: nil)
             valueSlider("手臂", value: $photo.adjustments.reshape.armThin, range: 0...1, step: 0.05, hint: nil)
+            }
 
             Text("背景").font(.subheadline.weight(.semibold))
             Picker("背景", selection: $photo.adjustments.background.kind) {

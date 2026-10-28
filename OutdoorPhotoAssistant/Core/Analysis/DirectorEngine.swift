@@ -25,7 +25,44 @@ struct DirectorBox: Codable, Equatable {
     }
 }
 
+/// Output of the on-device DirectorNet Core ML model (see tools/director_lab).
+/// Kept Foundation-only so the engine and its tests compile without CoreML.
+/// Shift convention (same as training): dx > 0 means the camera should move right,
+/// dy > 0 down, dz > 0 zoom in (zoom factor = exp(dz)). All relative to the current frame.
+struct DirectorMLOutput: Equatable {
+    var scene: String
+    var sceneConfidence: Double
+    var quality: Double // 0...1, how close the current framing is to the learned ideal
+    var dx: Double
+    var dy: Double
+    var dz: Double
+    var magnitude: Double { max(abs(dx), abs(dy), abs(dz) * 0.8) }
+}
+
+/// Exponential smoothing for the model output, which is sampled only a few times per second.
+struct DirectorMLSmoother {
+    private var state: DirectorMLOutput?
+    private var lastTime = -Double.infinity
+    var alpha = 0.5
+    var resetGap = 1.5
+
+    mutating func reset() { self = DirectorMLSmoother() }
+    mutating func update(_ new: DirectorMLOutput, now: Double) -> DirectorMLOutput {
+        defer { lastTime = now }
+        guard let old = state, now - lastTime <= resetGap else { state = new; return new }
+        var blended = new
+        blended.quality = old.quality + alpha * (new.quality - old.quality)
+        blended.dx = old.dx + alpha * (new.dx - old.dx)
+        blended.dy = old.dy + alpha * (new.dy - old.dy)
+        blended.dz = old.dz + alpha * (new.dz - old.dz)
+        blended.sceneConfidence = old.scene == new.scene ? old.sceneConfidence + alpha * (new.sceneConfidence - old.sceneConfidence) : new.sceneConfidence
+        state = blended
+        return blended
+    }
+}
+
 struct DirectorObservation: Equatable {
+    var ml: DirectorMLOutput?
     var subject: DirectorBox?
     var subjectKind = "none" // body / face / group / object / none
     var personCount = 0
@@ -198,6 +235,31 @@ enum DirectorCropImportance {
 }
 
 enum DirectorEngine {
+    /// Minimum model confidence / framing error before the model is allowed to speak.
+    static let mlMinimumMove = 0.12
+    static let mlGoodQuality = 0.80
+
+    /// Turns the learned framing suggestion into on-screen guidance. Never drives the lens by itself:
+    /// zoom stays behind the subject gate, the temporal controller and the cooldown.
+    static func mlEvidence(_ ml: DirectorMLOutput?) -> [DirectorEvidence] {
+        guard let ml, ml.dx.isFinite, ml.dy.isFinite, ml.dz.isFinite, ml.quality.isFinite else { return [] }
+        let quality = String(Int((ml.quality * 100).rounded()))
+        if ml.quality >= mlGoodQuality || ml.magnitude < mlMinimumMove {
+            return [DirectorEvidence(domain: "AI模型", rule: "构图模型评分", observation: "取景接近模型学到的理想构图（" + quality + "分）", action: "保持当前取景")]
+        }
+        var steps: [String] = []
+        let horizontal = abs(ml.dx) >= mlMinimumMove
+        let vertical = abs(ml.dy) >= mlMinimumMove
+        if horizontal { steps.append(ml.dx > 0 ? "向右转一点" : "向左转一点") }
+        if vertical { steps.append(ml.dy > 0 ? "镜头向下压一点" : "镜头向上抬一点") }
+        if abs(ml.dz) >= mlMinimumMove { steps.append(ml.dz > 0 ? "走近或小幅推近" : "后退或小幅拉远") }
+        let action = steps.joined(separator: "，")
+        var result = [DirectorEvidence(domain: "AI模型", rule: "构图模型评分", observation: "取景离理想构图还有差距（" + quality + "分）", action: action)]
+        // `机位` is what the instruction line shows; only promote it when the move is clear.
+        if ml.magnitude >= 0.2 { result.append(DirectorEvidence(domain: "机位", rule: "构图模型建议", observation: "模型建议调整取景", action: action)) }
+        return result
+    }
+
     static func context(_ input: DirectorInput) -> DirectorLearningContext {
         DirectorLearningContext(scene: input.scene, kind: input.observation.subjectKind,
                                 group: input.observation.personCount > 1,
@@ -253,9 +315,9 @@ enum DirectorEngine {
         if o.saturation > 0.48 || decision.protectHighlights { decision.maximumFilterStrength = min(0.4, decision.maximumFilterStrength) }
         if person && (input.preference?.filterSamples ?? 0) < 3 {
             decision.filter = o.brightness < 0.20 || o.warmth > 0.14 || o.saturation > 0.48 ? "自然" : "人像"
-        } else if o.brightness < 0.16 {
+        } else if (input.preference?.filterSamples ?? 0) < 3 && o.brightness < 0.16 {
             decision.filter = "自然"
-        } else if o.saturation < 0.12 {
+        } else if (input.preference?.filterSamples ?? 0) < 3 && o.saturation < 0.12 {
             decision.filter = "自然" // Neutral scenes must not be artificially colored.
         }
         let lightState = o.brightness < 0.20 ? "暗光" : o.brightness > 0.80 ? "明亮场景" : "正常亮度"
@@ -263,13 +325,18 @@ enum DirectorEngine {
         decision.evidence.append(evidence("滤镜", "拍摄现场依据", lightState + "；" + (person ? "检测到人物；" : "未检测到人物；") + colorState,
             "选择" + decision.filter + "；强度上限" + String(Int(decision.maximumFilterStrength * 100)) + "%" + (decision.protectHighlights ? "，优先保护高光" : "，保留现场层次")))
         decision.evidence.append(evidence("滤镜", "自然色与肤色优先", "滤镜：" + decision.filter, "按场景和用户反馈选风格，对高饱和与人像限制强度"))
+        let mlGuidance = Self.mlEvidence(o.ml)
         guard let box = o.subject, box.valid, o.confidence >= 0.50 else {
             decision.evidence.append(evidence("人物定位", "可靠主体门控", "未检测到可靠主体", "保持当前倍率，不根据猜测自动追焦放大"))
+            decision.evidence.append(contentsOf: mlGuidance)
             return decision
         }
         var desired: Double
         if o.subjectKind == "face" {
-            desired = input.framing == "特写" ? 0.45 : input.framing == "半身" || input.framing == "突出主体" ? 0.30 : 0.30
+            // A detected face is only part of a person. In automatic/full-body
+            // framing, leave space for the body instead of treating face height
+            // as the desired subject height.
+            desired = input.framing == "特写" ? 0.45 : input.framing == "半身" || input.framing == "突出主体" ? 0.30 : 0.22
         } else {
             switch input.framing {
             case "环境": desired = 0.42
@@ -315,10 +382,9 @@ enum DirectorEngine {
             if o.subjectBrightness > 0.9 && input.scene == "日落" && c > zoom { continue }
             if score(c) > bestScore + 0.025 { best = c; bestScore = score(c) }
         }
-        // Zoom is already protected by confidence, four-sample dwell, cooldown,
-        // edge veto and image-quality checks. Requiring the gyroscope's strict
-        // `isStable` flag here made handheld auto zoom almost impossible to enter.
-        let canZoom = abs(o.horizon) < 0.14 && needsChange
+        // Wait for stable framing before moving the lens; the controller also
+        // requires repeated observations before issuing a hardware command.
+        let canZoom = input.stable && abs(o.horizon) < 0.14 && needsChange
         decision.targetZoom = canZoom ? best : max(lower, min(upper, zoom))
         decision.shouldZoom = canZoom && abs(log(decision.targetZoom / zoom)) > 0.045
         let action = decision.shouldZoom ? (best > zoom ? "小幅推近，达到主体占比" : "小幅拉远，保留人物和留白") : "保持当前倍率"
@@ -356,6 +422,9 @@ enum DirectorEngine {
             portrait ? "先让人物远离背景；只有可用深度遮罩时再考虑轻度虚化，不模糊头发和主体边缘" : "保留背景细节，不默认虚化"))
         decision.evidence.append(evidence("曝光与快门", "能力与时机", "固定光圈手机由系统自动曝光协调ISO与快门；本轮通过曝光补偿保护层次",
             !input.stable ? "手机仍在移动，暂停自动快门" : o.sharpness < 65 ? "主体细节不足，请稳住手机并确认对焦，暂不自动拍" : "继续保持：连续有效画面确认后触发快门，条件变化立即重判"))
+        // Rule-based camera-position advice (subject off-centre, clipped) keeps priority over the model's.
+        let hasRulePosition = decision.evidence.contains { $0.domain == "机位" }
+        decision.evidence.append(contentsOf: mlGuidance.filter { !($0.domain == "机位" && hasRulePosition) })
         decision.ready = input.stable && !clipped && !decision.shouldZoom && abs(o.horizon) < 0.06 && o.sharpness >= 65 && o.brightness > 0.16 && o.brightness < 0.88
         return decision
     }
