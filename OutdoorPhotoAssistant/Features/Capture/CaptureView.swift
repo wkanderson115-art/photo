@@ -1280,27 +1280,40 @@ struct CaptureView: View {
         let useMatteDepth = shot.depthMask != nil && options.directorEvidence.contains { $0.domain == "自动景深" }
         if useMatteDepth { options.backgroundBlur = 0 }
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            let styled = self.render(shot: shot,
-                                     options: options,
-                                     useMatteDepth: useMatteDepth,
-                                     depthStrength: depthStrength)
-            let score = Int((Double(composition) * 0.45
-                             + Double(exposure) * 0.25
-                             + Double(sharpness) * 0.30).rounded())
-            DispatchQueue.main.async {
-                self.activeRenders = max(0, self.activeRenders - 1)
-                guard let styled else {
-                    self.showToast("图像处理失败")
-                    return
-                }
-                self.finish(shot: shot,
-                            styled: styled,
-                            score: score,
-                            options: options,
-                            keepsOriginal: keepsOriginal)
+        enqueueRender(shot: shot,
+                      options: options,
+                      useMatteDepth: useMatteDepth,
+                      depthStrength: depthStrength,
+                      exposure: exposure,
+                      composition: composition,
+                      sharpness: sharpness,
+                      keepsOriginal: keepsOriginal)
+    }
+
+    private func enqueueRender(shot: CapturedPhoto,
+                               options: PhotoRenderOptions,
+                               useMatteDepth: Bool,
+                               depthStrength: CGFloat,
+                               exposure: Int,
+                               composition: Int,
+                               sharpness: Int,
+                               keepsOriginal: Bool) {
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            let styled = render(shot: shot, options: options,
+                                useMatteDepth: useMatteDepth, depthStrength: depthStrength)
+            let score = Int((Double(composition) * 0.45 + Double(exposure) * 0.25 + Double(sharpness) * 0.30).rounded())
+            DispatchQueue.main.async { [self] in
+                completeRender(shot: shot, styled: styled, score: score,
+                               options: options, keepsOriginal: keepsOriginal)
             }
         }
+    }
+
+    private func completeRender(shot: CapturedPhoto, styled: UIImage?, score: Int,
+                                options: PhotoRenderOptions, keepsOriginal: Bool) {
+        activeRenders = max(0, activeRenders - 1)
+        guard let styled else { showToast("图像处理失败"); return }
+        finish(shot: shot, styled: styled, score: score, options: options, keepsOriginal: keepsOriginal)
     }
 
     private func render(shot: CapturedPhoto,
