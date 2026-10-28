@@ -1168,7 +1168,7 @@ struct CaptureView: View {
     private func shutterButton(diameter: CGFloat) -> some View {
         let outer = max(44, diameter)
         let inner = max(34, outer - 10)
-        Button { takePhoto() } label: {
+        return Button { takePhoto() } label: {
             ZStack {
                 Circle().fill(.black.opacity(0.22)).frame(width: outer + 4, height: outer + 4)
                 Circle().stroke(.white, lineWidth: 3).frame(width: outer, height: outer)
