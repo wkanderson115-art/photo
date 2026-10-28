@@ -109,7 +109,7 @@ enum RetouchSpecialist {
                              height: face.boundingBox.height * height)
             let inset = box.insetBy(dx: box.width * 0.14, dy: box.height * 0.12)
             let field = CIFilter.radialGradient()
-            field.center = CIVector(x: inset.midX, y: inset.midY)
+            field.center = CGPoint(x: inset.midX, y: inset.midY)
             field.radius0 = Float(min(inset.width, inset.height) * 0.25)
             field.radius1 = Float(min(inset.width, inset.height) * 0.48)
             field.color0 = CIColor(red: 0.17, green: 0.17, blue: 0.17, alpha: 1)
@@ -131,7 +131,7 @@ enum RetouchSpecialist {
                 guard !region.isNull, region.width > 0, region.height > 0 else { continue }
                 // Compositing opaque black over the mask removes the protected feature.
                 // Use a softly feathered cutout to avoid visible retouch boundaries.
-                let center = CIVector(x: region.midX, y: region.midY)
+                let center = CGPoint(x: region.midX, y: region.midY)
                 let gradient = CIFilter.radialGradient()
                 gradient.center = center
                 gradient.radius0 = Float(max(region.width, region.height) * 0.38)
