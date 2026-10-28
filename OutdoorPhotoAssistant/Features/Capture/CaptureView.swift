@@ -929,7 +929,7 @@ struct CaptureView: View {
         }
     }
 
-    var body: some View {
+    private var capturePresented: some View {
         captureSurface
         .sheet(isPresented: $showZoomControl) { zoomSheet }
         .sheet(isPresented: $showingEffects) { effectsPanel }
@@ -939,6 +939,10 @@ struct CaptureView: View {
         .sheet(isPresented: $showingSettings) {
             SettingsView(isPresentedModally: true).preferredColorScheme(.light)
         }
+    }
+
+    private var captureLifecycle: some View {
+        capturePresented
         .onAppear {
             guard self.isSelected else { return }
             OrientationPolicy.apply(allowsRotation ? .allButUpsideDown : .portrait)
@@ -990,6 +994,10 @@ struct CaptureView: View {
                 camera.stop()
             } else if isSelected && scenePhase == .active { camera.start() }
         }
+    }
+
+    var body: some View {
+        captureLifecycle
         .onChange(of: camera.photoToken) { _, _ in
             self.processLatestPhoto()
         }
@@ -1273,10 +1281,10 @@ struct CaptureView: View {
         if useMatteDepth { options.backgroundBlur = 0 }
 
         DispatchQueue.global(qos: .userInitiated).async {
-            let rendered = PhotoPostProcessor.render(original: shot.image, options: options)
-            let styled = rendered.flatMap { image in
-                useMatteDepth ? DepthPortraitProcessor.apply(image: image, mask: shot.depthMask, strength: depthStrength) : image
-            }
+            let styled = self.render(shot: shot,
+                                     options: options,
+                                     useMatteDepth: useMatteDepth,
+                                     depthStrength: depthStrength)
             let score = Int((Double(composition) * 0.45
                              + Double(exposure) * 0.25
                              + Double(sharpness) * 0.30).rounded())
@@ -1293,6 +1301,15 @@ struct CaptureView: View {
                             keepsOriginal: keepsOriginal)
             }
         }
+    }
+
+    private func render(shot: CapturedPhoto,
+                        options: PhotoRenderOptions,
+                        useMatteDepth: Bool,
+                        depthStrength: CGFloat) -> UIImage? {
+        guard let rendered = PhotoPostProcessor.render(original: shot.image, options: options) else { return nil }
+        guard useMatteDepth else { return rendered }
+        return DepthPortraitProcessor.apply(image: rendered, mask: shot.depthMask, strength: depthStrength)
     }
 
     private func finish(shot: CapturedPhoto,
